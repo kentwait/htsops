@@ -1,0 +1,29 @@
+[package]
+name = "htsops"
+version = "0.1.0"
+authors = ["Kent Kawashima <kentkawashima@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "htsops"
+# "cdylib" is necessary to produce a shared library for Python to import from.
+#
+# Downstream Rust code (including code in `bin/`, `examples/`, and `tests/`) will not be able
+# to `use string_sum;` unless the "rlib" or "lib" crate type is also included, e.g.:
+crate-type = ["cdylib", "rlib"]
+# crate-type = ["cdylib"]
+
+[[bin]]
+name = "pileup"
+path = "bin/pileup.rs"
+
+[[bin]]
+name = "control_pileup"
+path = "bin/control_pileup.rs"
+
+[dependencies]
+pyo3 = { version = "0.13.1", features = ["extension-module"] }
+bio = { version = "0.32.0" }
+bio-types = { version = "0.10.0" }
+rust-htslib = { version = "0.36.0" }
+itertools = { version = "0.10.0" }
