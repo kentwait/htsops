@@ -1,31 +1,137 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeSet};
+use rust_htslib::bam::{Indel, pileup::Pileup};
+use bio_types::strand::ReqStrand;
+
 
 #[derive(Debug)]
 pub struct PileupRecord {
     chrom: String,
-    pos: usize,
-    ref_char: char,
-    depth: usize,
-    pileup_str: String,
-    base_quals: String,
-    map_quals: String,
+    pos: u64,
+    f_depth: u64,
+    r_depth: u64,
+    bases: Vec<char>,
+    bq: Vec<u8>,
+    mq: Vec<u8>,
+    indels: HashMap<String, u64>,
 }
 impl PileupRecord {
-    fn new(record: &str) -> PileupRecord {
-        // Assumes output_MQ is enabled
-        // Format:
-        // chrom pos refchar depth pileup_str base_quals map_quals 
-        let items: Vec<&str> = record.split('\t').collect();
-    
-        PileupRecord {
-            chrom: items[0].to_owned(),
-            pos: items[1].parse::<usize>().unwrap(),
-            ref_char: items[2].chars().collect::<Vec<char>>()[0].to_owned(),
-            depth: items[3].parse::<usize>().unwrap(),
-            pileup_str: items[4].to_owned(),
-            base_quals: items[5].to_owned(),
-            map_quals: items[6].to_owned(),
+    pub fn from_pileup(chrom: &str, pileup: Pileup) -> PileupRecord {
+        let chrom = chrom.to_owned();
+        let pos = pileup.pos() as u64;
+        
+        let mut bases: Vec<char> = Vec::new();
+        let mut bq: Vec<u8> = Vec::new();
+        let mut mq: Vec<u8> = Vec::new();
+        let mut indels: HashMap<String, u64> = HashMap::new();
+        
+        let mut f_depth = 0;
+        let mut r_depth = 0;
+
+        // Iterate over reads covering this position
+        for aln in pileup.alignments() {
+            let rec = aln.record();
+
+            // Insertion or deletion
+            match aln.indel() {
+                Indel::Ins(len) => (),
+                Indel::Del(len) => (),
+                Indel::None => ()
+            }
+            
+            // Substitutions
+            if let Some(qpos) = aln.qpos() {
+                // bases
+                match aln.record().strand() {
+                    ReqStrand::Forward => {
+                        f_depth += 1;
+                        match rec.seq()[qpos] {
+                            65 => bases.push('A'),
+                            67 => bases.push('C'),
+                            71 => bases.push('G'),
+                            84 => bases.push('T'),
+                            78 => bases.push('N'),
+                            _ => (),
+                        }
+                    },
+                    ReqStrand::Reverse => {
+                        r_depth += 1;
+                        match rec.seq()[qpos] {
+                            65 => bases.push('a'),
+                            67 => bases.push('c'),
+                            71 => bases.push('g'),
+                            84 => bases.push('t'),
+                            78 => bases.push('n'),
+                            _ => (),
+                        }
+                    },
+                };
+                // bq
+                bq.push(rec.qual()[qpos]);
+                // mq
+                mq.push(rec.mapq());
+            } 
         }
+        if bases.len() != bq.len() || bases.len() != mq.len() { 
+            panic!("Unequal lengths: {} {} {}", bases.len(), bq.len(), mq.len())
+        }
+        PileupRecord {
+            chrom,
+            pos,
+            f_depth,
+            r_depth,
+            bases,
+            bq,
+            mq,
+            indels,
+        }
+    }
+
+    pub fn quality_filter(&self, min_bq: u8, min_mq: u8) -> PileupRecord {
+        let bq_pos: BTreeSet<usize> = self.bq.iter().enumerate().filter(|(i, q)| **q >= min_bq).map(|(i, _)| i as usize).collect();
+        let mq_pos: BTreeSet<usize> = self.mq.iter().enumerate().filter(|(i, q)| **q >= min_mq).map(|(i, _)| i as usize).collect();
+        let target_pos: Vec<usize> = bq_pos.union(&mq_pos).cloned().collect();
+        let bases: Vec<char> = target_pos.iter().map(|&i| self.bases[i].to_owned()).collect();
+        let bq: Vec<u8> = target_pos.iter().map(|&i| self.bq[i].to_owned()).collect();
+        let mq: Vec<u8> = target_pos.iter().map(|&i| self.mq[i].to_owned()).collect();
+
+        let mut f_depth = 0;
+        let mut r_depth = 0;
+        for b in bases.iter() {
+            match b {
+                'A' => f_depth += 1,
+                'C' => f_depth += 1,
+                'G' => f_depth += 1,
+                'T' => f_depth += 1,
+                'N' => f_depth += 1,
+                'a' => r_depth += 1,
+                'c' => r_depth += 1,
+                'g' => r_depth += 1,
+                't' => r_depth += 1,
+                'n' => r_depth += 1,
+                _ => ()
+            }
+        }
+        PileupRecord {
+            chrom: self.chrom.to_owned(),
+            pos: self.pos,
+            f_depth,
+            r_depth,
+            bases,
+            bq,
+            mq,
+            indels: self.indels.clone(),
+        }
+    }
+
+    pub fn depth_ratio(&self) -> f64 {
+        self.f_depth as f64 / self.r_depth as f64
+    }
+
+    pub fn mean_bq(&self) -> f64 {
+        self.bq.iter().map(|i| *i as i64).sum::<i64>() as f64 / self.bq.len() as f64
+    }
+    pub fn mean_mq(&self) -> f64 {
+        self.mq.iter().map(|i| *i as i64).sum::<i64>() as f64 / self.mq.len() as f64
     }
 }
 
