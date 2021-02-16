@@ -1,5 +1,5 @@
 use std::collections::{HashMap, BTreeSet};
-use rust_htslib::bam::{Indel, pileup::Pileup};
+use rust_htslib::bam::pileup::{Indel, Pileup};
 use bio_types::strand::ReqStrand;
 
 
