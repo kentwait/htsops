@@ -15,6 +15,24 @@ pub struct PileupRecord {
     indels: HashMap<String, u64>,
 }
 impl PileupRecord {
+    pub fn chrom(&self) -> &str { &self.chrom }
+    pub fn pos(&self) -> u64 { self.pos }
+    pub fn depth(&self) -> (u64, u64) { (self.f_depth, self.r_depth) }
+    pub fn bases(&self) -> &Vec<char> { &self.bases }
+    pub fn bq(&self) -> &Vec<u8> { &self.bq }
+    pub fn mq(&self) -> &Vec<u8> { &self.mq }
+    pub fn indels(&self) -> &HashMap<String, u64> { &self.indels }
+
+    pub fn total_depth(&self) -> u64 { self.f_depth + self.r_depth }
+    pub fn depth_ratio(&self) -> f64 { self.f_depth as f64 / self.r_depth as f64 }
+
+    pub fn mean_bq(&self) -> f64 {
+        self.bq.iter().map(|i| *i as i64).sum::<i64>() as f64 / self.bq.len() as f64
+    }
+    pub fn mean_mq(&self) -> f64 {
+        self.mq.iter().map(|i| *i as i64).sum::<i64>() as f64 / self.mq.len() as f64
+    }
+
     pub fn from_pileup(chrom: &str, pileup: Pileup) -> PileupRecord {
         let chrom = chrom.to_owned();
         let pos = pileup.pos() as u64;
@@ -22,7 +40,7 @@ impl PileupRecord {
         let mut bases: Vec<char> = Vec::new();
         let mut bq: Vec<u8> = Vec::new();
         let mut mq: Vec<u8> = Vec::new();
-        let mut indels: HashMap<String, u64> = HashMap::new();
+        let indels: HashMap<String, u64> = HashMap::new();
         
         let mut f_depth = 0;
         let mut r_depth = 0;
@@ -33,8 +51,8 @@ impl PileupRecord {
 
             // Insertion or deletion
             match aln.indel() {
-                Indel::Ins(len) => (),
-                Indel::Del(len) => (),
+                Indel::Ins(_) => (),
+                Indel::Del(_) => (),
                 Indel::None => ()
             }
             
@@ -87,13 +105,14 @@ impl PileupRecord {
     }
 
     pub fn quality_filter(&self, min_bq: u8, min_mq: u8) -> PileupRecord {
-        let bq_pos: BTreeSet<usize> = self.bq.iter().enumerate().filter(|(i, q)| **q >= min_bq).map(|(i, _)| i as usize).collect();
-        let mq_pos: BTreeSet<usize> = self.mq.iter().enumerate().filter(|(i, q)| **q >= min_mq).map(|(i, _)| i as usize).collect();
+        // Get positions that passed minimum quality scores
+        let bq_pos: BTreeSet<usize> = self.bq.iter().enumerate().filter(|(_, q)| **q >= min_bq).map(|(i, _)| i as usize).collect();
+        let mq_pos: BTreeSet<usize> = self.mq.iter().enumerate().filter(|(_, q)| **q >= min_mq).map(|(i, _)| i as usize).collect();
         let target_pos: Vec<usize> = bq_pos.union(&mq_pos).cloned().collect();
         let bases: Vec<char> = target_pos.iter().map(|&i| self.bases[i].to_owned()).collect();
         let bq: Vec<u8> = target_pos.iter().map(|&i| self.bq[i].to_owned()).collect();
         let mq: Vec<u8> = target_pos.iter().map(|&i| self.mq[i].to_owned()).collect();
-
+        // Recount forward and reverse depth
         let mut f_depth = 0;
         let mut r_depth = 0;
         for b in bases.iter() {
@@ -121,18 +140,7 @@ impl PileupRecord {
             mq,
             indels: self.indels.clone(),
         }
-    }
-
-    pub fn depth_ratio(&self) -> f64 {
-        self.f_depth as f64 / self.r_depth as f64
-    }
-
-    pub fn mean_bq(&self) -> f64 {
-        self.bq.iter().map(|i| *i as i64).sum::<i64>() as f64 / self.bq.len() as f64
-    }
-    pub fn mean_mq(&self) -> f64 {
-        self.mq.iter().map(|i| *i as i64).sum::<i64>() as f64 / self.mq.len() as f64
-    }
+    }    
 }
 
 pub enum BaseType {
