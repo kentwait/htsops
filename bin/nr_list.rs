@@ -29,7 +29,7 @@ fn main() {
             continue;
         }
         let interval = target_locs.entry(rec.chrom().to_owned()).or_insert(BTreeSet::new());
-        (rec.start()..(rec.end()+1)).for_each(|i| {
+        (rec.start()..rec.end()).for_each(|i| {
             interval.insert(i);
         });
         j += 1;
@@ -58,12 +58,12 @@ fn main() {
             eprint!("{}\t\t", chrom.clone());
             let mut locs_iter = locs.iter();
             let mut start = *locs_iter.next().unwrap();
-            let mut last = *locs_iter.next().unwrap();
+            let mut last = start+1;
             for i in locs_iter {
                 let i = *i;
-                if i != last+1 {
+                if i != last {
                     chrom_intervals.insert((start, last));
-                    handle.write_fmt(format_args!("{}\t{}\t{}\n", chrom, start, last)).unwrap();
+                    handle.write_fmt(format_args!("{}\t{}\t{}\t{}_{}-{}\t0\t+\n", chrom, start, last, chrom, start, last)).unwrap();
                     start = i;
                     j += 1;
                     c += 1;
@@ -72,7 +72,7 @@ fn main() {
                         j = 0;
                     }
                 }
-                last = i;
+                last = i+1;
             }
             handle.flush().unwrap();
             eprintln!("{}", c);
