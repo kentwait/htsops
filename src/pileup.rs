@@ -2,8 +2,11 @@ use std::collections::{HashMap, BTreeSet};
 use rust_htslib::bam::pileup::{Indel, Pileup};
 use bio_types::strand::ReqStrand;
 
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug)]
+use std::fmt;
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct PileupRecord {
     chrom: String,
     pos: u64,
@@ -23,6 +26,36 @@ impl PileupRecord {
     pub fn mq(&self) -> &Vec<u8> { &self.mq }
     pub fn indels(&self) -> &HashMap<String, u64> { &self.indels }
 
+    pub fn base_counts(&self) -> HashMap<char, u64> {
+        let (mut f_a, mut f_c, mut f_g, mut f_t, mut f_n) = (0, 0, 0, 0, 0);
+        let (mut r_a, mut r_c, mut r_g, mut r_t, mut r_n) = (0, 0, 0, 0, 0);
+        self.bases.iter().for_each(|b| {
+            match b {
+                'A' => f_a += 1,
+                'C' => f_c += 1,
+                'G' => f_g += 1,
+                'T' => f_t += 1,
+                'N' => f_n += 1,
+                'a' => r_a += 1,
+                'c' => r_c += 1,
+                'g' => r_g += 1,
+                't' => r_t += 1,
+                'n' => r_n += 1,
+                _ => ()
+            }
+        });
+        let bases: HashMap<char, u64> = [
+                ('A', f_a), ('C', f_c), ('G', f_g), ('T', f_t), ('N', f_n),
+                ('a', r_a), ('c', r_c), ('g', r_g), ('t', r_t), ('n', r_n)]
+            .iter()
+            .cloned()
+            .collect();
+        bases
+    }
+    pub fn indel_counts(&self) -> HashMap<String, u64> {
+        self.indels().to_owned()
+    }
+
     pub fn total_depth(&self) -> u64 { self.f_depth + self.r_depth }
     pub fn depth_ratio(&self) -> f64 { self.f_depth as f64 / self.r_depth as f64 }
 
@@ -31,6 +64,19 @@ impl PileupRecord {
     }
     pub fn mean_mq(&self) -> f64 {
         self.mq.iter().map(|i| *i as i64).sum::<i64>() as f64 / self.mq.len() as f64
+    }
+
+    pub fn new_empty(chrom: &str, pos: u64) -> PileupRecord {
+        PileupRecord {
+            chrom: chrom.to_owned(),
+            pos,
+            f_depth: 0,
+            r_depth: 0,
+            bases: Vec::new(),
+            bq: Vec::new(),
+            mq: Vec::new(),
+            indels: HashMap::new(),
+        }
     }
 
     pub fn from_pileup(chrom: &str, pileup: Pileup) -> PileupRecord {
@@ -141,6 +187,20 @@ impl PileupRecord {
             indels: self.indels.clone(),
         }
     }    
+}
+
+impl fmt::Display for PileupRecord {
+    // This trait requires `fmt` with this exact signature.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Write strictly the first element into the supplied output
+        // stream: `f`. Returns `fmt::Result` which indicates whether the
+        // operation succeeded or failed. Note that `write!` uses syntax which
+        // is very similar to `println!`.
+        let bases: String = self.bases.iter().collect();
+        let indels: String = self.indels.iter().map(|(k, _)| k.to_string()).collect::<Vec<String>>().join(":");
+        write!(f, "{}:{} depth:{}:{} bases:{} indels:{}", 
+            self.chrom, self.pos, self.f_depth, self.r_depth, bases, indels)
+    }
 }
 
 pub enum BaseType {
