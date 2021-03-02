@@ -1,8 +1,5 @@
-use std::collections::{HashMap, BTreeSet};
-use bio_types::strand::ReqStrand;
+use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
-
-use std::fmt;
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -14,19 +11,143 @@ struct SitePileup {
 }
 
 impl SitePileup {
+    fn parse_qual_str(q_str: &str) -> Vec<u8> {
+        q_str.chars().map(|c| c as u8).collect()
+    }
     
+    fn parse_base_str(base_str: &str, ref_char: &char) -> (Vec<char>, HashMap<String, usize>) {
+        let mut bases: Vec<char> = Vec::new();
+        let mut indels: HashMap<String, usize> = HashMap::new();
+        
+        // temp vars
+        let mut i = 0;
+        let base_chars: Vec<char> = base_str.chars().map(|c| c.to_owned()).collect();
+        let mut indel_str: Vec<char> = Vec::new();
+        
+        while i < base_chars.len() {
+            let c = base_chars[i];
+            match c {
+                // indel
+                ch if (ch == '+') || (ch == '-') => {
+                    indel_str.push(ch);
+                    i += 1;
+                    // search all digits
+                    let mut indel_len_vec: Vec<char> = Vec::new();
+                    for d in base_chars[i..].iter() {
+                        match d.is_ascii_digit() {
+                            true => indel_len_vec.push(d.to_owned()),
+                            false => break,
+                        }
+                    }
+                    if indel_len_vec.len() == 0 {
+                        panic!(format!("Invalid indel_len_vec [{:?}] from base str: {:?}", 
+                            indel_len_vec, base_str))
+                    }
+                    let indel_len: usize = indel_len_vec.iter().cloned().collect::<String>().parse::<usize>().unwrap();
+                    base_chars[i..(i+indel_len_vec.len()+indel_len)].iter().for_each(|c| {
+                        indel_str.push(c.to_owned());
+                    });
+                    i += indel_len_vec.len() + indel_len;
+                    let indel_string: String = indel_str.iter().cloned().collect();
+                    *indels.entry(indel_string).or_insert(0) += 1;
+                    indel_str = Vec::new();
+                },
+                // not indel
+                // same as ref_char
+                '.' => {
+                    bases.push(ref_char.to_ascii_uppercase());
+                    i += 1;
+                },
+                ',' => {
+                    bases.push(ref_char.to_ascii_lowercase());
+                    i += 1;
+                },
+                // substitution
+                'A' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                'C' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                'G' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                'T' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                'N' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                'a' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                'c' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                'g' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                't' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                'n' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                // * or # ref base deletion, CIGAR “D”
+                '*' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                '#' => {
+                    bases.push(c);
+                    i += 1;
+                },
+                // start of read
+                '^' => i += 2,
+                // others
+                // > or < ref skip, CIGAR “N”
+                // $ indicating end of read
+                _ => i += 1,
+            }
+        }
+        
+        (bases, indels)
+    }
+    
+
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct MultiSamplePileup {
+struct SpatialSitePileup {
     chrom: String, 
     pos: u64, 
     ref_char: char,
     pileups: HashMap<String, SitePileup>,
 }
 
-impl MultiSamplePileup {
-    fn parse_multisample_pileup_row(row: &str, sample_list: Vec<&str>) -> SitePileup {
+impl SpatialSitePileup {
+    // TODO: Add hasmap of sample_list and 2d coords
+    fn empty_pileup(chrom: &str, pos: u64, ref_char: &char) -> SpatialSitePileup {
+        let chrom: String = chrom.to_owned();
+        let pos: u64 = pos.clone();
+        let ref_char: char = ref_char.to_owned();
+        let pileups: HashMap<String, SitePileup> = HashMap::new();
+
+        SpatialSitePileup{ chrom, pos, ref_char, pileups }
+    }
+
+    // TODO: Change sample_list to hasmap of sample_list and 2d coords
+    fn parse_mpileup_row(row: &str, sample_list: Vec<&str>) -> SpatialSitePileup {
         let cols: Vec<String> = row.split('\t').map(|s| s.to_owned()).collect();
         let chrom: String = cols[0].to_owned();
         let pos: u64 = cols[1].parse::<u64>().unwrap();
@@ -34,16 +155,20 @@ impl MultiSamplePileup {
         
         let pileups: HashMap<String, SitePileup> = sample_list.into_iter().enumerate()
             .map(|(i, sample_name)| {
-                let cov = (&cols[3+(i*4)]).parse::<u16>().unwrap();
+                let cov = (&cols[3+(i*4)]).parse::<usize>().unwrap();
                 let base_str = &cols[4+(i*4)];
                 let bq_str = &cols[5+(i*4)];
                 let mq_str = &cols[6+(i*4)];
     
-                let (bases, indels) = parse_base_str(&base_str, &ref_char);
-                let bqs = parse_qual_str(&bq_str);
-                let mqs = parse_qual_str(&mq_str);
+                let (bases, indels) = SitePileup::parse_base_str(&base_str, &ref_char);
+                let bqs = SitePileup::parse_qual_str(&bq_str);
+                let mqs = SitePileup::parse_qual_str(&mq_str);
                 
-                if bases.len() != bqs.len() {
+                if bases.len() != cov {
+                    panic!(format!("Base length [{}] and coverage [{}] do not match: {}", 
+                        bases.len(), cov, base_str));
+                }
+                else if bases.len() != bqs.len() {
                     panic!(format!("Base length [{}] and base qualities length [{}] do not match: {}:{}", 
                         bases.len(), bqs.len(), base_str, bq_str));
                 } else if bases.len() != mqs.len() {
@@ -51,124 +176,14 @@ impl MultiSamplePileup {
                         bases.len(), mqs.len(), base_str, mq_str));
                 }
     
-                (sample_name.to_owned(), Pileup{ bases, indels, bqs, mqs })
+                (sample_name.to_owned(), SitePileup{ bases, indels, bqs, mqs })
             }).collect();
-        SitePileup{ chrom, pos, ref_char, pileups }
+        
+            SpatialSitePileup{ chrom, pos, ref_char, pileups }
     }
+
 }
 
-fn parse_qual_str(q_str: &str) -> Vec<u8> {
-    q_str.chars().map(|c| c as u8).collect()
-}
-
-fn parse_base_str(base_str: &str, ref_char: &char) -> (Vec<char>, HashMap<String, usize>) {
-    let mut bases: Vec<char> = Vec::new();
-    let mut indels: HashMap<String, usize> = HashMap::new();
-    
-    // temp vars
-    let mut i = 0;
-    let base_chars: Vec<char> = base_str.chars().map(|c| c.to_owned()).collect();
-    let mut indel_str: Vec<char> = Vec::new();
-    
-    while i < base_chars.len() {
-        let c = base_chars[i];
-        match c {
-            // indel
-            ch if (ch == '+') || (ch == '-') => {
-                indel_str.push(ch);
-                i += 1;
-                // search all digits
-                let mut indel_len_vec: Vec<char> = Vec::new();
-                for d in base_chars[i..].iter() {
-                    match d.is_ascii_digit() {
-                        true => indel_len_vec.push(d.to_owned()),
-                        false => break,
-                    }
-                }
-                if indel_len_vec.len() == 0 {
-                    panic!(format!("Invalid indel_len_vec [{:?}] from base str: {:?}", 
-                        indel_len_vec, base_str))
-                }
-                let indel_len: usize = indel_len_vec.iter().cloned().collect::<String>().parse::<usize>().unwrap();
-                base_chars[i..(i+indel_len_vec.len()+indel_len)].iter().for_each(|c| {
-                    indel_str.push(c.to_owned());
-                });
-                i += indel_len_vec.len() + indel_len;
-                let indel_string: String = indel_str.iter().cloned().collect();
-                *indels.entry(indel_string).or_insert(0) += 1;
-                indel_str = Vec::new();
-            },
-            // not indel
-            // same as ref_char
-            '.' => {
-                bases.push(ref_char.to_ascii_uppercase());
-                i += 1;
-            },
-            ',' => {
-                bases.push(ref_char.to_ascii_lowercase());
-                i += 1;
-            },
-            // substitution
-            'A' => {
-                bases.push(c);
-                i += 1;
-            },
-            'C' => {
-                bases.push(c);
-                i += 1;
-            },
-            'G' => {
-                bases.push(c);
-                i += 1;
-            },
-            'T' => {
-                bases.push(c);
-                i += 1;
-            },
-            'N' => {
-                bases.push(c);
-                i += 1;
-            },
-            'a' => {
-                bases.push(c);
-                i += 1;
-            },
-            'c' => {
-                bases.push(c);
-                i += 1;
-            },
-            'g' => {
-                bases.push(c);
-                i += 1;
-            },
-            't' => {
-                bases.push(c);
-                i += 1;
-            },
-            'n' => {
-                bases.push(c);
-                i += 1;
-            },
-            // * or # ref base deletion, CIGAR “D”
-            '*' => {
-                bases.push(c);
-                i += 1;
-            },
-            '#' => {
-                bases.push(c);
-                i += 1;
-            },
-            // start of read
-            '^' => i += 2,
-            // others
-            // > or < ref skip, CIGAR “N”
-            // $ indicating end of read
-            _ => i += 1,
-        }
-    }
-    
-    (bases, indels)
-}
 
 // Using rust htslib directly
 
