@@ -25,6 +25,10 @@ path = "bin/control_pileup.rs"
 name = "nr_list"
 path = "bin/nr_list.rs"
 
+[[bin]]
+name = "call_snv"
+path = "bin/call_snv.rs"
+
 [dependencies]
 pyo3 = { version = "0.13.1", features = ["extension-module"] }
 bio = { version = "0.32.0" }
