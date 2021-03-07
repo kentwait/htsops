@@ -3,18 +3,65 @@ use serde::{Serialize, Deserialize};
 
 
 #[derive(Serialize, Deserialize, Debug)]
-struct SitePileup {
-    bases: Vec<char>, 
-    indels: HashMap<String, usize>,
-    bqs: Vec<u8>, 
-    mqs: Vec<u8>
+pub struct SitePileup {
+    pub bases: Vec<char>, 
+    pub indels: HashMap<String, usize>,
+    pub bqs: Vec<u8>, 
+    pub mqs: Vec<u8>,
 }
 
 impl SitePileup {
+    pub fn from_str(ref_char: &char, cov: usize, base_str: &str, bq_str: &str, mq_str: &str) -> SitePileup {
+        // Immediately return if base_str is "*" which means empty
+        if base_str == "*" {
+            let bases = Vec::new();
+            let indels = HashMap::new();
+            let bqs = Vec::new();
+            let mqs = Vec::new();
+            return SitePileup{ bases, indels, bqs, mqs }
+        }
+        let (mut bases, indels) = SitePileup::parse_base_str(base_str, ref_char);
+        let mut bqs = SitePileup::parse_qual_str(bq_str);
+        let mut mqs = SitePileup::parse_qual_str(mq_str);
+
+        if bases.len() != cov {
+            panic!(format!("Base length [{}] and coverage [{}] do not match:\n{}", 
+                bases.len(), cov, base_str));
+        }
+        else if bases.len() != bqs.len() {
+            panic!(format!("Base length [{}] and base qualities length [{}] do not match:\n{}\n{}", 
+                bases.len(), bqs.len(), base_str, bq_str));
+        } 
+        else if bases.len() != mqs.len() {
+            panic!(format!("Base length [{}] and mapping qualities length [{}] do not match:\n{}\n{}", 
+                bases.len(), mqs.len(), base_str, mq_str));
+        }
+        let keep: Vec<bool> = bases.iter().map(|b| {
+                if b == &'D' || b == &'d' { false }
+                else { true }
+            }).collect();
+        {
+            let mut i = 0;
+            bases.retain(|_| (keep[i], i += 1).0);
+        }
+        {
+            let mut i = 0;
+            bqs.retain(|_| (keep[i], i += 1).0);
+        }
+        {
+            let mut i = 0;
+            mqs.retain(|_| (keep[i], i += 1).0);
+        }
+        SitePileup{ bases, indels, bqs, mqs }
+    }
+
+    // TODO: transform this into an iterator
     fn parse_qual_str(q_str: &str) -> Vec<u8> {
         q_str.chars().map(|c| c as u8).collect()
     }
     
+    // TODO: transform this into an iterator that spits out an enum indicating
+    // base, indel, del,
     fn parse_base_str(base_str: &str, ref_char: &char) -> (Vec<char>, HashMap<String, usize>) {
         let mut bases: Vec<char> = Vec::new();
         let mut indels: HashMap<String, usize> = HashMap::new();
@@ -105,11 +152,11 @@ impl SitePileup {
                 },
                 // * or # ref base deletion, CIGAR “D”
                 '*' => {
-                    bases.push(c);
+                    bases.push('D');
                     i += 1;
                 },
                 '#' => {
-                    bases.push(c);
+                    bases.push('d');
                     i += 1;
                 },
                 // start of read
@@ -124,20 +171,106 @@ impl SitePileup {
         (bases, indels)
     }
     
+    pub fn quality_filter(&mut self, min_bq: u8, min_mq: u8, drop_n: bool) -> Option<usize> {
+        let keep: Vec<bool> = self.bases.iter().enumerate()
+            .map(|(i, b)| {
+                if drop_n == true {
+                    if *b == 'N' || *b == 'n' { return false }
+                }
+                let bq = self.bqs[i];
+                let mq = self.mqs[i];
+                if bq >= min_bq && mq >= min_mq { true }
+                else { false }
+            }).collect();
+        {
+            let mut i = 0;
+            self.bases.retain(|_| (keep[i], i += 1).0);
+        }
+        {
+            let mut i = 0;
+            self.bqs.retain(|_| (keep[i], i += 1).0);
+        }
+        {
+            let mut i = 0;
+            self.mqs.retain(|_| (keep[i], i += 1).0);
+        }
+        if self.bases.len() > 0 {
+            return Some(self.bases.len())
+        }
+        return None
+    }
 
+    // Count bases
+    pub fn base_count(&self) -> (usize, usize, usize, usize, usize) {
+        let (mut a, mut c, mut g, mut t, mut n) = (0, 0, 0, 0, 0);
+        self.bases.iter().for_each(|b| {
+            match b {
+                'A' => a += 1,
+                'C' => c += 1,
+                'G' => g += 1,
+                'T' => t += 1,
+                'N' => n += 1,
+                'a' => a += 1,
+                'c' => c += 1,
+                'g' => g += 1,
+                't' => t += 1,
+                'n' => n += 1,
+                _ => ()
+            }
+        });
+        (a, c, g, t, n)
+    }
+
+    pub fn allele_count(&self) -> Vec<(char, usize)> {
+        let (a, c, g, t, n) = self.base_count();
+        let mut alleles: Vec<(char, usize)> = vec![
+            ('a', a), ('c', c), ('g', g), ('t', t), ('n', n)].into_iter()
+            .filter_map(|(k, v)| match v {
+                0 => None,
+                _ => Some((k, v))
+            }).collect();
+        alleles.sort_by(|(_, a), (_, b)| b.cmp(a));
+        
+        alleles
+    }
+
+    pub fn fr_count(&self) -> (usize, usize) {
+        let mut f = 0;
+        let mut r = 0;
+        self.bases.iter().for_each(|b| {
+            if b.is_ascii_uppercase() == true { f += 1 } 
+            else if b.is_ascii_lowercase() == true { r += 1 }
+        });
+        (f, r)
+    }
+
+    pub fn forward_count(&self) -> usize {
+        self.bases.iter().map(|b| if b.is_ascii_uppercase() == true { 1 } else { 0 }).sum()
+    }
+
+    pub fn reverse_count(&self) -> usize {
+        self.bases.iter().map(|b| if b.is_ascii_lowercase() == true { 1 } else { 0 }).sum()
+    }
+
+    pub fn fr_ratio(&self) -> f32 {
+        let (count_upper, count_lower) = self.fr_count();
+        (count_upper as f32) / ((count_upper + count_lower) as f32)
+    }
+
+    pub fn cov(&self) -> usize { self.bases.len() }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct SpatialSitePileup {
-    chrom: String, 
-    pos: u64, 
-    ref_char: char,
-    pileups: HashMap<String, SitePileup>,
+pub struct SpatialSitePileup {
+    pub chrom: String, 
+    pub pos: u64, 
+    pub ref_char: char,
+    pub pileups: HashMap<String, SitePileup>,
 }
 
 impl SpatialSitePileup {
     // TODO: Add hasmap of sample_list and 2d coords
-    fn empty_pileup(chrom: &str, pos: u64, ref_char: &char) -> SpatialSitePileup {
+    pub fn empty_pileup(chrom: &str, pos: u64, ref_char: &char) -> SpatialSitePileup {
         let chrom: String = chrom.to_owned();
         let pos: u64 = pos.clone();
         let ref_char: char = ref_char.to_owned();
@@ -147,43 +280,35 @@ impl SpatialSitePileup {
     }
 
     // TODO: Change sample_list to hasmap of sample_list and 2d coords
-    fn parse_mpileup_row(row: &str, sample_list: Vec<&str>) -> SpatialSitePileup {
+    pub fn parse_mpileup_row(row: &str, sample_list: &Vec<&str>) -> SpatialSitePileup {
         let cols: Vec<String> = row.split('\t').map(|s| s.to_owned()).collect();
         let chrom: String = cols[0].to_owned();
         let pos: u64 = cols[1].parse::<u64>().unwrap();
         let ref_char: char = cols[2].chars().next().unwrap();
         
-        let pileups: HashMap<String, SitePileup> = sample_list.into_iter().enumerate()
-            .map(|(i, sample_name)| {
-                let cov = (&cols[3+(i*4)]).parse::<usize>().unwrap();
-                let base_str = &cols[4+(i*4)];
-                let bq_str = &cols[5+(i*4)];
-                let mq_str = &cols[6+(i*4)];
-    
-                let (bases, indels) = SitePileup::parse_base_str(&base_str, &ref_char);
-                let bqs = SitePileup::parse_qual_str(&bq_str);
-                let mqs = SitePileup::parse_qual_str(&mq_str);
-                
-                if bases.len() != cov {
-                    panic!(format!("Base length [{}] and coverage [{}] do not match: {}", 
-                        bases.len(), cov, base_str));
-                }
-                else if bases.len() != bqs.len() {
-                    panic!(format!("Base length [{}] and base qualities length [{}] do not match: {}:{}", 
-                        bases.len(), bqs.len(), base_str, bq_str));
-                } else if bases.len() != mqs.len() {
-                    panic!(format!("Base length [{}] and mapping qualities length [{}] do not match: {}:{}", 
-                        bases.len(), mqs.len(), base_str, mq_str));
-                }
-    
-                (sample_name.to_owned(), SitePileup{ bases, indels, bqs, mqs })
+        // ENHANCEMENT: Spawn multiple threads and let each thread work with one group of cols
+        let pileups: HashMap<String, SitePileup> = sample_list.iter().enumerate()
+            .map(|(i, &sample_name)| {
+                let site_pileup = SitePileup::from_str(
+                    &ref_char, (&cols[3+(i*4)]).parse::<usize>().unwrap(),
+                    &cols[4+(i*4)], &cols[5+(i*4)], &cols[6+(i*4)]);
+                (sample_name.to_owned(), site_pileup)
             }).collect();
         
             SpatialSitePileup{ chrom, pos, ref_char, pileups }
     }
-
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ControlFilterResult([bool; 4]);
+
+impl ControlFilterResult {
+    pub fn new() -> ControlFilterResult { ControlFilterResult([false, false, false, false]) }
+    pub fn qual_ok(&self) -> bool { self.0[0] }
+    pub fn cov_ok(&self) -> bool { self.0[1] }
+    pub fn fr_ratio_ok(&self) -> bool { self.0[2] }
+    pub fn max_alt_cnt_ok(&self) -> bool { self.0[3] }
+}
 
 // Using rust htslib directly
 
