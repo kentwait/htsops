@@ -4,6 +4,7 @@
 // use std::collections::HashMap;
 
 pub mod pileup;
+pub mod filter;
 
 // #[pyfunction]
 // fn parse_pileup_record(record: &str) -> PyResult<String> {

@@ -1,6 +1,121 @@
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
+use std::ops::Add;
+
+
+#[derive(Debug)]
+pub struct FullBaseCount((usize, usize), (usize, usize), (usize, usize), (usize, usize), (usize, usize));
+impl FullBaseCount {
+    pub fn f_a(&self) -> usize { self.0.0 }
+    pub fn r_a(&self) -> usize { self.0.1 }
+    pub fn f_c(&self) -> usize { self.1.0 }
+    pub fn r_c(&self) -> usize { self.1.1 }
+    pub fn f_g(&self) -> usize { self.2.0 }
+    pub fn r_g(&self) -> usize { self.2.1 }
+    pub fn f_t(&self) -> usize { self.3.0 }
+    pub fn r_t(&self) -> usize { self.3.1 }
+
+    pub fn forward(&self) -> usize {
+        self.0.0 + self.1.0 + self.2.0 + self.3.0 
+    }
+    pub fn reverse(&self) -> usize {
+        self.0.1 + self.1.1 + self.2.1 + self.3.1
+    }
+
+    pub fn to_basecount(&self) -> BaseCount {
+        BaseCount(
+            self.a(), self.c(), self.g(), self.t(),
+        )
+    }
+}
+impl FullBaseCount {
+    pub fn from_vec(v: &Vec<&char>) -> Self {
+        let (mut f_a, mut f_c, mut f_g, mut f_t) = (0, 0, 0, 0);
+        let (mut r_a, mut r_c, mut r_g, mut r_t) = (0, 0, 0, 0);
+        v.iter().for_each(|b| {
+            match b {
+                'A' => f_a += 1,
+                'C' => f_c += 1,
+                'G' => f_g += 1,
+                'T' => f_t += 1,
+                'a' => r_a += 1,
+                'c' => r_c += 1,
+                'g' => r_g += 1,
+                't' => r_t += 1,
+                _ => ()
+            }
+        });
+        FullBaseCount((f_a, r_a),(f_c, r_c),(f_g, r_g),(f_t, r_t))
+    
+    }
+
+    pub fn a(&self) -> usize { self.0.0 + self.0.1 }
+    pub fn c(&self) -> usize { self.1.0 + self.1.1 }
+    pub fn g(&self) -> usize { self.2.0 + self.2.1 }
+    pub fn t(&self) -> usize { self.3.0 + self.3.1 }
+
+    pub fn total(&self) -> usize {
+        self.forward() + self.reverse()
+    }
+}
+impl Add for FullBaseCount {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self(
+            (self.0.0 + other.0.0, self.0.1 + other.0.1),
+            (self.1.0 + other.1.0, self.1.1 + other.1.1),
+            (self.2.0 + other.2.0, self.2.1 + other.2.1),
+            (self.3.0 + other.3.0, self.3.1 + other.3.1),
+        )
+    }
+}
+
+
+#[derive(Debug)]
+pub struct BaseCount(usize, usize, usize, usize);
+impl BaseCount {
+    pub fn from_vec(v: &Vec<&char>) -> Self {
+        let (mut a, mut c, mut g, mut t) = (0, 0, 0, 0);
+        v.iter().for_each(|b| {
+            match b {
+                'A' => a += 1,
+                'C' => c += 1,
+                'G' => g += 1,
+                'T' => t += 1,
+                'a' => a += 1,
+                'c' => c += 1,
+                'g' => g += 1,
+                't' => t += 1,
+                _ => ()
+            }
+        });
+        BaseCount(a, c, g, t)
+    }
+
+    pub fn a(&self) -> usize { self.0 }
+    pub fn c(&self) -> usize { self.1 }
+    pub fn g(&self) -> usize { self.2 }
+    pub fn t(&self) -> usize { self.3 }
+
+    pub fn total(&self) -> usize {
+        self.0 + self.1 + self.2 + self.3
+    }
+}
+impl Add for BaseCount {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self(
+            self.0 + other.0,
+            self.1 + other.1,
+            self.2 + other.2,
+            self.3 + other.3,
+        )
+    }
+}
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SitePileup {
@@ -9,9 +124,9 @@ pub struct SitePileup {
     pub bqs: Vec<u8>, 
     pub mqs: Vec<u8>,
 }
-
 impl SitePileup {
-    pub fn from_str(ref_char: &char, cov: usize, base_str: &str, bq_str: &str, mq_str: &str) -> SitePileup {
+    pub fn from_str(ref_char: &char, cov: usize, base_str: &str, 
+            bq_str: &str, mq_str: &str) -> SitePileup {
         // Immediately return if base_str is "*" which means empty
         if base_str == "*" {
             let bases = Vec::new();
@@ -57,7 +172,7 @@ impl SitePileup {
 
     // TODO: transform this into an iterator
     fn parse_qual_str(q_str: &str) -> Vec<u8> {
-        q_str.chars().map(|c| c as u8).collect()
+        q_str.chars().map(|c| (c as u8) - 33).collect()
     }
     
     // TODO: transform this into an iterator that spits out an enum indicating
@@ -170,13 +285,39 @@ impl SitePileup {
         
         (bases, indels)
     }
-    
-    pub fn quality_filter(&mut self, min_bq: u8, min_mq: u8, drop_n: bool) -> Option<usize> {
+
+    fn cleanup(&mut self, drop_n: bool, drop_del: bool) -> Result<usize> {
         let keep: Vec<bool> = self.bases.iter().enumerate()
             .map(|(i, b)| {
                 if drop_n == true {
                     if *b == 'N' || *b == 'n' { return false }
                 }
+                if drop_del == true {
+                    if *b == 'D' || *b == 'd' { return false }
+                }
+                return true
+            }).collect();
+        {
+            let mut i = 0;
+            self.bases.retain(|_| (keep[i], i += 1).0);
+        }
+        {
+            let mut i = 0;
+            self.bqs.retain(|_| (keep[i], i += 1).0);
+        }
+        {
+            let mut i = 0;
+            self.mqs.retain(|_| (keep[i], i += 1).0);
+        }
+        if self.bases.len() > 0 {
+            return Some(self.bases.len())
+        }
+        return None)
+    }
+
+    pub fn quality_filter(&mut self, min_bq: u8, min_mq: u8) -> Option<usize> {
+        let keep: Vec<bool> = self.bases.iter().enumerate()
+            .map(|(i, b)| {
                 let bq = self.bqs[i];
                 let mq = self.mqs[i];
                 if bq >= min_bq && mq >= min_mq { true }
@@ -201,37 +342,11 @@ impl SitePileup {
     }
 
     // Count bases
-    pub fn base_count(&self) -> (usize, usize, usize, usize, usize) {
-        let (mut a, mut c, mut g, mut t, mut n) = (0, 0, 0, 0, 0);
-        self.bases.iter().for_each(|b| {
-            match b {
-                'A' => a += 1,
-                'C' => c += 1,
-                'G' => g += 1,
-                'T' => t += 1,
-                'N' => n += 1,
-                'a' => a += 1,
-                'c' => c += 1,
-                'g' => g += 1,
-                't' => t += 1,
-                'n' => n += 1,
-                _ => ()
-            }
-        });
-        (a, c, g, t, n)
+    pub fn full_base_count(&self) -> FullBaseCount {
+        FullBaseCount::from_vec(&self.bases)
     }
-
-    pub fn allele_count(&self) -> Vec<(char, usize)> {
-        let (a, c, g, t, n) = self.base_count();
-        let mut alleles: Vec<(char, usize)> = vec![
-            ('a', a), ('c', c), ('g', g), ('t', t), ('n', n)].into_iter()
-            .filter_map(|(k, v)| match v {
-                0 => None,
-                _ => Some((k, v))
-            }).collect();
-        alleles.sort_by(|(_, a), (_, b)| b.cmp(a));
-        
-        alleles
+    pub fn base_count(&self) -> BaseCount {
+        BaseCount::from_vec(&self.bases)
     }
 
     pub fn fr_count(&self) -> (usize, usize) {
@@ -259,6 +374,7 @@ impl SitePileup {
 
     pub fn cov(&self) -> usize { self.bases.len() }
 }
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SpatialSitePileup {
@@ -297,17 +413,6 @@ impl SpatialSitePileup {
         
             SpatialSitePileup{ chrom, pos, ref_char, pileups }
     }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ControlFilterResult([bool; 4]);
-
-impl ControlFilterResult {
-    pub fn new() -> ControlFilterResult { ControlFilterResult([false, false, false, false]) }
-    pub fn qual_ok(&self) -> bool { self.0[0] }
-    pub fn cov_ok(&self) -> bool { self.0[1] }
-    pub fn fr_ratio_ok(&self) -> bool { self.0[2] }
-    pub fn max_alt_cnt_ok(&self) -> bool { self.0[3] }
 }
 
 // Using rust htslib directly

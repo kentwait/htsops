@@ -1,43 +1,17 @@
+#[macro_use]
 use std::path::Path;
 use std::collections::HashMap;
 use rust_htslib::tbx::{self, Read as TbxRead};
 
 use htsops::pileup::{SitePileup, SpatialSitePileup, ControlFilterResult};
-
-pub struct FilterParameters {
-    pub min_bq: u8,
-    pub min_mq: u8,
-    pub min_cov: usize,
-    pub min_ac: usize,
-    pub fr_ratio_range: (f32, f32),
-    pub drop_n: bool
-}
-
-pub struct CallSNVParameters {
-    pub min_bq: u8,
-    pub min_mq: u8,
-    pub min_cov: usize,
-    pub min_ac: usize,
-    pub fr_ratio_range: (f32, f32),
-    pub minor_fr_ratio_range: (f32, f32),
-    pub drop_n: bool
-}
-
-pub struct CallResult {
-    pub score: u8,
-    pub fr_ratio: f32,
-    pub cov: usize,
-    pub major_allele: Allele,
-    pub minor_allele: Option<Allele>,
-}
-
-pub struct Allele(char, usize);
-impl Allele {
-    pub fn base(&self) -> &char { &self.0 }
-    pub fn count(&self) -> usize { self.1}
-}
+use htsops::filter::{FilterParameters, FilterResult, SNVCall, SNVResult, AlleleCount, AlleleFreq};
 
 fn filter_normal(pileup: &mut SitePileup, params: &FilterParameters) -> CallResult {
+    // bit score
+    // 1 - passed quality filter
+    // 2 - passed min cov post quality filter
+    // 4 - has 1 or 2 alleles // consider splitting
+    // 8 - has a forward-reverse ratio within bounds
     let mut score = 0;
     // Quality filter
     let cov = match pileup.quality_filter(params.min_bq, params.min_mq, params.drop_n) {
@@ -79,7 +53,8 @@ fn filter_normal(pileup: &mut SitePileup, params: &FilterParameters) -> CallResu
     }
 }
 
-fn call_regionwide_minor_alleles(multi_pileup: &mut SpatialSitePileup, sample_names: &Vec<&str>) -> Option<Allele> {
+fn call_regionwide_minor_allele(multi_pileup: &mut SpatialSitePileup, 
+        sample_names: &Vec<&str>, major_allele: &char) -> Option<AlleleCount> {
     let (mut tot_a, mut tot_c, mut tot_g, mut tot_t) = (0, 0, 0, 0);
     for sample_name in sample_names.iter() {
         let mut pileup = multi_pileup.pileups.get_mut(*sample_name).unwrap();
@@ -90,38 +65,42 @@ fn call_regionwide_minor_alleles(multi_pileup: &mut SpatialSitePileup, sample_na
         tot_t += _t;
     }
     // Determine region-wide major and minor allele
-    let mut alleles: Vec<Allele> = vec![
+    // Major is based on control allele, 
+    // this must also be the top in the pooled
+    // Minor is second highest overall
+    // Major + minor should be greater than 95% of total coverage
+    let mut alleles: Vec<AlleleCount> = vec![
         ('a', tot_a), ('c', tot_c), ('g', tot_g), ('t', tot_t)]
     .into_iter()
     .filter_map(|(k, v)| match v {
         0 => None,
-        _ => Some(Allele(k, v))
+        _ => Some(AlleleCount(k, v))
     }).collect();
-    alleles.sort_by(|Allele(_, a), Allele(_, b)| b.cmp(a));
-
-    match alleles.len() {
-        2 => {
-            Some(alleles[1])
-        },
-        3 => {
-            if alleles[1].count() > 1 && alleles[2].count() == 1 {
-                Some(alleles[1])
-            } else {
-                None
+    alleles.sort_by(|AlleleCount(_, a), AlleleCount(_, b)| b.cmp(a));
+    if alleles.len() > 0 {
+        if major_allele != alleles[0].base() {
+            panic!("Major allele in control [{}] and target pool [{}] do not match", 
+                major_allele, alleles[0].base());
+        }
+        if alleles.len() == 1 { return None }
+        else if alleles.len() == 2 { return Some(alleles[1]) }
+        else if alleles.len() > 2 {
+            let total_count = (tot_a + tot_c + tot_g + tot_t) as f64;
+            let total_majmin = (alleles[0].count() + alleles[0].count()) as f64;
+            if total_majmin / total_count >= 0.95 {
+                return Some(alleles[1])
             }
-        },
-        4 => {
-            if alleles[1].count() > 1 && alleles[3].count() == 1 {
-                Some(alleles[1])
-            } else {
-                None
-            }
-        },
-        _ => None,
+        }
     }
+    return None
 }
 
 fn call_snv_on_target(pileup: &mut SitePileup, params: &CallSNVParameters) -> CallResult {
+    // bit score
+    // 1 - passed quality filter
+    // 2 - passed min cov post quality filter
+    // 4 - has 1 or 2 alleles // consider splitting
+    // 8 - has a forward-reverse ratio within bounds
     let mut score = 0;
     // Quality filter
     let cov = match pileup.quality_filter(params.min_bq, params.min_mq, params.drop_n) {
@@ -130,25 +109,26 @@ fn call_snv_on_target(pileup: &mut SitePileup, params: &CallSNVParameters) -> Ca
         _ => 0,
     };
     // Major allele and count
-    let (major_allele, major_cnt, minor_allele, minor_cnt) = {
-        let alleles = pileup.allele_count();
-        // TODO: Tier perfect and imperfect
-        // Doesnt consider hetero
-        match alleles.len() {
-            0 => panic!("No alleles present. Possibly empty pileup?"),
-            1 => {
-                score += 4;
-                (alleles[0].0, alleles[0].1, None, None)
-            },
-            2 => if alleles[1].1 == params.min_ac {
-                    score += 4;
-                    (alleles[0].0, alleles[0].1, Some(alleles[1].0), Some(alleles[1].1))
-                 } else {
-                    (alleles[0].0, alleles[0].1, None, None)
-                 }
-            _ => (alleles[0].0, alleles[0].1, None, None),
-        }
+    let (a, c, g, t, n) = pileup.base_count();
+    let major_count = match params.major_allele.to_ascii_lowercase() {
+        'a' => a,
+        'c' => c,
+        'g' => g,
+        't' => t,
+        'n' => n,
+        b => panic!("Invalid base [{}]", b),
     };
+    let minor_count = match params.minor_allele.to_ascii_lowercase() {
+        'a' => a,
+        'c' => c,
+        'g' => g,
+        't' => t,
+        'n' => n,
+        b => panic!("Invalid base [{}]", b),
+    };
+    // 
+
+    
     // FR balance filter
     let fr_ratio = pileup.fr_ratio();
     if fr_ratio > params.fr_ratio_lb && fr_ratio < params.fr_ratio_ub {
@@ -272,7 +252,14 @@ fn main() {
             }
         }).collect();
 
-    
+    // Read through all records in all chromosomes
+    // Look at control first and apply filter
+    // If control passed, set major allele
+    // Then pool targets and apply filter as a pool
+    // If pool passed, call minor allele
+    // Then, apply filter to each sample and call SNV independently
+    // Return SiteStatus per site per sample
+
     // FIRST PASS
     // Read through all records in all chromosomes
     // Compute statistics:
