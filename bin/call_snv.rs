@@ -3,144 +3,139 @@ use std::path::Path;
 use std::collections::HashMap;
 use rust_htslib::tbx::{self, Read as TbxRead};
 
-use htsops::pileup::{SitePileup, SpatialSitePileup, ControlFilterResult};
-use htsops::filter::{FilterParameters, FilterResult, SNVCall, SNVResult, AlleleCount, AlleleFreq};
+use htsops::pileup::{SitePileup, SpatialSitePileup};
+use htsops::pileup::{BaseCount, FullBaseCount, AlleleCount, AlleleFreq, AlleleSet};
+use htsops::filter::{FilterParameters, ControlFilterScore, TargetFilterScore, ControlFilterResult, TargetFilterResult};
+use htsops::filter::{SNVParameters, SNVScore, SNVResult};
 
-fn filter_normal(pileup: &mut SitePileup, params: &FilterParameters) -> CallResult {
-    // bit score
-    // 1 - passed quality filter
-    // 2 - passed min cov post quality filter
-    // 4 - has 1 or 2 alleles // consider splitting
-    // 8 - has a forward-reverse ratio within bounds
-    let mut score = 0;
+
+fn filter_normal(pileup: &mut SitePileup, params: &FilterParameters) -> ControlFilterScore {
+    let mut score: ControlFilterScore = Default::default();
+    // Drop Ns and/or drop deletions
+    if params.drop_n || params.drop_del {
+        pileup.cleanup(params.drop_n, params.drop_del);
+    }
     // Quality filter
-    let cov = match pileup.quality_filter(params.min_bq, params.min_mq, params.drop_n) {
-        Some(c) if c >= params.min_cov => { score += 3; c },
-        Some(c) if c < params.min_cov => { score += 1; c },
-        _ => 0,
+    // Minimum coverage post filter
+    let cov: usize = if let Some(c) = pileup.quality_filter(params.min_bq, params.min_mq) {
+        if c > 0 { score.insert(ControlFilterScore::PassedQualFilter) }
+        if c >= params.min_cov { score.insert(ControlFilterScore::PassedMinCov) }
+        c
+    } else {
+        0
     };
-    // Major allele and count
-    let (major_allele, minor_allele) = {
-        let alleles = pileup.allele_count();
-        // TODO: Tier perfect and imperfect
-        // Doesnt consider hetero
-        match alleles.len() {
-            0 => panic!("No alleles present. Possibly empty pileup?"),
-            1 => {
-                score += 4;
-                (Allele(alleles[0].0, alleles[0].1), None)
-            },
-            2 => if alleles[1].1 == params.min_ac {
-                    score += 4;
-                    (Allele(alleles[0].0, alleles[0].1), Some(Allele(alleles[1].0, alleles[1].1)))
-                 } else {
-                    (Allele(alleles[0].0, alleles[0].1), None)
-                 }
-            _ => (Allele(alleles[0].0, alleles[0].1), None),
-        }
+    // Check if site in control has a variant
+    // Currently works only for homozygous sites
+    let allele_set = AlleleSet::from_basecount(pileup.base_count());
+    let total_count = allele_set.total_count() as f64;
+    match allele_set.len() {
+        0 => panic!("No alleles present. Possibly empty pileup?"),
+        1 => {
+            score.insert(ControlFilterScore::InvariantSite);
+        },
+        _ => {
+            if (allele_set.len() == 2) && (allele_set.alleles[1].count() <= params.max_minor_ac) {
+                score.insert(ControlFilterScore::PassedMaxVariantCount);
+            }
+        },
     };
-    // FR balance filter
+    // Check forward/reverse balance
     let fr_ratio = pileup.fr_ratio();
     if fr_ratio > params.fr_ratio_range.0 && fr_ratio < params.fr_ratio_range.1 {
-        score += 8;
+        score.insert(ControlFilterScore::PassedFRRatio);
     }
-    CallResult{
-        score,
-        fr_ratio: 0.,
-        cov: 0,
-        major_allele,
-        minor_allele,
+    // Return result
+    score
+}
+
+fn cleanup_sample_pileups(multi_pileup: &mut SpatialSitePileup, sample_names: &Vec<&str>, params: FilterParameters) {
+    for sample_name in sample_names.iter() {
+        let pileup = multi_pileup.pileups.get_mut(*sample_name).unwrap();
+        if params.drop_n || params.drop_del { 
+            pileup.cleanup(params.drop_n, params.drop_del);
+        }
+        pileup.quality_filter(params.min_bq, params.min_mq);
     }
 }
 
-fn call_regionwide_minor_allele(multi_pileup: &mut SpatialSitePileup, 
-        sample_names: &Vec<&str>, major_allele: &char) -> Option<AlleleCount> {
-    let (mut tot_a, mut tot_c, mut tot_g, mut tot_t) = (0, 0, 0, 0);
+enum MinorAlleleCall {
+    Some(AlleleCount),
+    None,
+    Indeterminate,
+}
+
+fn call_regionwide_minor_allele(multi_pileup: &mut SpatialSitePileup, sample_names: &Vec<&str>, major_allele: &char) -> MinorAlleleCall {
+    let mut base_count: BaseCount = BaseCount::empty();
     for sample_name in sample_names.iter() {
-        let mut pileup = multi_pileup.pileups.get_mut(*sample_name).unwrap();
-        let (_a, _c, _g, _t, _) = pileup.base_count();
-        tot_a += _a;
-        tot_c += _c;
-        tot_g += _g;
-        tot_t += _t;
+        let pileup = multi_pileup.pileups.get_mut(*sample_name).unwrap();
+        base_count = base_count + pileup.base_count();
     }
     // Determine region-wide major and minor allele
     // Major is based on control allele, 
     // this must also be the top in the pooled
     // Minor is second highest overall
-    // Major + minor should be greater than 95% of total coverage
-    let mut alleles: Vec<AlleleCount> = vec![
-        ('a', tot_a), ('c', tot_c), ('g', tot_g), ('t', tot_t)]
-    .into_iter()
-    .filter_map(|(k, v)| match v {
-        0 => None,
-        _ => Some(AlleleCount(k, v))
-    }).collect();
-    alleles.sort_by(|AlleleCount(_, a), AlleleCount(_, b)| b.cmp(a));
-    if alleles.len() > 0 {
-        if major_allele != alleles[0].base() {
-            panic!("Major allele in control [{}] and target pool [{}] do not match", 
-                major_allele, alleles[0].base());
-        }
-        if alleles.len() == 1 { return None }
-        else if alleles.len() == 2 { return Some(alleles[1]) }
-        else if alleles.len() > 2 {
-            let total_count = (tot_a + tot_c + tot_g + tot_t) as f64;
-            let total_majmin = (alleles[0].count() + alleles[0].count()) as f64;
-            if total_majmin / total_count >= 0.95 {
-                return Some(alleles[1])
-            }
-        }
+    // Major + minor should be greater than 98% of total coverage
+    let allele_set: AlleleSet = AlleleSet::from_basecount(base_count);
+    let alleles = allele_set.alleles;
+    if allele_set.len() == 0 {
+        panic!("No alleles present. Possibly empty pileup?")
     }
-    return None
+    if major_allele != alleles[0].base() {
+        panic!("Major allele in control [{}] and target pool [{}] do not match", 
+            major_allele, alleles[0].base());
+    }
+    match allele_set.len() {
+        1 => MinorAlleleCall::None,
+        2 => MinorAlleleCall::Some(alleles[1]),
+        _ => {
+            let total_count = allele_set.total_count() as f64;
+            let major_minor_sum = (alleles[0].count() + alleles[1].count()) as f64;
+            if major_minor_sum / total_count >= 0.98 {
+                MinorAlleleCall::Some(alleles[1])
+            } else {
+                MinorAlleleCall::Indeterminate
+            }
+        },
+    }
 }
 
-fn call_snv_on_target(pileup: &mut SitePileup, params: &CallSNVParameters) -> CallResult {
-    // bit score
-    // 1 - passed quality filter
-    // 2 - passed min cov post quality filter
-    // 4 - has 1 or 2 alleles // consider splitting
-    // 8 - has a forward-reverse ratio within bounds
-    let mut score = 0;
+fn filter_target(pileup: &mut SitePileup, params: &FilterParameters) -> TargetFilterScore {
+    let mut score: TargetFilterScore = Default::default();
     // Quality filter
-    let cov = match pileup.quality_filter(params.min_bq, params.min_mq, params.drop_n) {
-        Some(c) if c >= params.min_cov => { score += 3; c },
-        Some(c) if c < params.min_cov => { score += 1; c },
-        _ => 0,
-    };
-    // Major allele and count
-    let (a, c, g, t, n) = pileup.base_count();
-    let major_count = match params.major_allele.to_ascii_lowercase() {
-        'a' => a,
-        'c' => c,
-        'g' => g,
-        't' => t,
-        'n' => n,
-        b => panic!("Invalid base [{}]", b),
-    };
-    let minor_count = match params.minor_allele.to_ascii_lowercase() {
-        'a' => a,
-        'c' => c,
-        'g' => g,
-        't' => t,
-        'n' => n,
-        b => panic!("Invalid base [{}]", b),
-    };
-    // 
-
-    
+    if pileup.cov() > 0 {
+        score.insert(TargetFilterScore::PassedQualFilter);
+    }
+    if pileup.cov() >= params.min_minor_ac {
+        score.insert(TargetFilterScore::PassedMinCov);
+    }
     // FR balance filter
     let fr_ratio = pileup.fr_ratio();
-    if fr_ratio > params.fr_ratio_lb && fr_ratio < params.fr_ratio_ub {
-        score += 8;
+    if fr_ratio > params.fr_ratio_range.0 && fr_ratio < params.fr_ratio_range.1 {
+        score.insert(TargetFilterScore::PassedFRRatio);
     }
-    CallResult{
-        score,
-        fr_ratio: 0.,
-        cov: 0,
-        major_allele,
-        minor_allele,
-    }
+    // Call alleles
+    let allele_set = AlleleSet::from_basecount(pileup.base_count());
+    let total_count = allele_set.total_count() as f64;
+    match allele_set.len() {
+        0 => panic!("No alleles present. Possibly empty pileup?"),
+        1 => (),
+        2 => {
+            score.insert(TargetFilterScore::VariantSite);
+            score.insert(TargetFilterScore::PassedMaxOtherCount);
+        },
+        _ => {
+            score.insert(TargetFilterScore::VariantSite);
+            // Check if the total of other variants is less than the maximum
+            if allele_set.alleles.iter().skip(2).map(|a| a.count()).sum::<usize>() <= filt_params.max_minor_ac {
+                score.insert(TargetFilterScore::PassedMaxOtherCount);
+            }
+        },
+    }; 
+    score
+}
+
+fn call_target_snv(pileup: &mut SitePileup, params: &SNVParameters) {
+    
 }
 
 fn main() {
