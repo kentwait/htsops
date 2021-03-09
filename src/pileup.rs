@@ -5,7 +5,7 @@ use std::ops::Add;
 
 
 #[derive(Debug)]
-pub struct FullBaseCount((usize, usize), (usize, usize), (usize, usize), (usize, usize), (usize, usize));
+pub struct FullBaseCount((usize, usize), (usize, usize), (usize, usize), (usize, usize));
 impl FullBaseCount {
     pub fn f_a(&self) -> usize { self.0.0 }
     pub fn r_a(&self) -> usize { self.0.1 }
@@ -30,7 +30,7 @@ impl FullBaseCount {
     }
 }
 impl FullBaseCount {
-    pub fn from_vec(v: &Vec<&char>) -> Self {
+    pub fn from_vec(v: &Vec<char>) -> Self {
         let (mut f_a, mut f_c, mut f_g, mut f_t) = (0, 0, 0, 0);
         let (mut r_a, mut r_c, mut r_g, mut r_t) = (0, 0, 0, 0);
         v.iter().for_each(|b| {
@@ -50,6 +50,10 @@ impl FullBaseCount {
     
     }
 
+    pub fn empty() -> Self {
+        FullBaseCount((0, 0), (0, 0), (0, 0), (0, 0))
+    }
+
     pub fn a(&self) -> usize { self.0.0 + self.0.1 }
     pub fn c(&self) -> usize { self.1.0 + self.1.1 }
     pub fn g(&self) -> usize { self.2.0 + self.2.1 }
@@ -59,11 +63,43 @@ impl FullBaseCount {
         self.forward() + self.reverse()
     }
 }
-impl Add for FullBaseCount {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        Self(
+impl Add<FullBaseCount> for FullBaseCount {
+    type Output = FullBaseCount;
+    fn add(self, other: FullBaseCount) -> Self::Output {
+        FullBaseCount(
+            (self.0.0 + other.0.0, self.0.1 + other.0.1),
+            (self.1.0 + other.1.0, self.1.1 + other.1.1),
+            (self.2.0 + other.2.0, self.2.1 + other.2.1),
+            (self.3.0 + other.3.0, self.3.1 + other.3.1),
+        )
+    }
+}
+impl Add<FullBaseCount> for &FullBaseCount {
+    type Output = FullBaseCount;
+    fn add(self, other: FullBaseCount) -> Self::Output {
+        FullBaseCount(
+            (self.0.0 + other.0.0, self.0.1 + other.0.1),
+            (self.1.0 + other.1.0, self.1.1 + other.1.1),
+            (self.2.0 + other.2.0, self.2.1 + other.2.1),
+            (self.3.0 + other.3.0, self.3.1 + other.3.1),
+        )
+    }
+}
+impl Add<&FullBaseCount> for FullBaseCount {
+    type Output = FullBaseCount;
+    fn add(self, other: &FullBaseCount) -> Self::Output {
+        FullBaseCount(
+            (self.0.0 + other.0.0, self.0.1 + other.0.1),
+            (self.1.0 + other.1.0, self.1.1 + other.1.1),
+            (self.2.0 + other.2.0, self.2.1 + other.2.1),
+            (self.3.0 + other.3.0, self.3.1 + other.3.1),
+        )
+    }
+}
+impl Add<&FullBaseCount> for &FullBaseCount {
+    type Output = FullBaseCount;
+    fn add(self, other: &FullBaseCount) -> Self::Output {
+        FullBaseCount(
             (self.0.0 + other.0.0, self.0.1 + other.0.1),
             (self.1.0 + other.1.0, self.1.1 + other.1.1),
             (self.2.0 + other.2.0, self.2.1 + other.2.1),
@@ -73,10 +109,11 @@ impl Add for FullBaseCount {
 }
 
 
+
 #[derive(Debug)]
 pub struct BaseCount(usize, usize, usize, usize);
 impl BaseCount {
-    pub fn from_vec(v: &Vec<&char>) -> Self {
+    pub fn from_vec(v: &Vec<char>) -> Self {
         let (mut a, mut c, mut g, mut t) = (0, 0, 0, 0);
         v.iter().for_each(|b| {
             match b {
@@ -92,6 +129,10 @@ impl BaseCount {
             }
         });
         BaseCount(a, c, g, t)
+    }
+
+    pub fn empty() -> Self {
+        BaseCount(0, 0, 0, 0)
     }
 
     pub fn a(&self) -> usize { self.0 }
@@ -113,6 +154,79 @@ impl Add for BaseCount {
             self.2 + other.2,
             self.3 + other.3,
         )
+    }
+}
+
+#[derive(Debug)]
+pub struct AlleleCount(char, usize);
+impl AlleleCount {
+    pub fn new(base: &char, count: usize) -> Self {
+        AlleleCount(base.to_owned(), count)
+    }
+    pub fn base(&self) -> &char { &self.0 }
+    pub fn base_index(&self) -> usize { 
+        match self.0.to_ascii_lowercase() {
+            'a' => 0,
+            'c' => 1,
+            'g' => 2,
+            't' => 3,
+            b => panic!("Invalid base [{}]", b),
+        }    
+    }
+    pub fn count(&self) -> usize { self.1}
+}
+
+
+#[derive(Debug)]
+pub struct AlleleFreq(char, f64);
+impl AlleleFreq {
+    pub fn new(base: &char, freq: f64) -> Self {
+        AlleleFreq(base.to_owned(), freq)
+    }
+    pub fn base(&self) -> &char { &self.0 }
+    pub fn freq(&self) -> f64 { self.1}
+}
+
+pub struct AlleleSet{
+    pub alleles: Vec<AlleleCount>,
+    sorted: bool,
+}
+impl AlleleSet {
+    pub fn new(alleles: Vec<AlleleCount>) -> Self {
+        AlleleSet {
+            alleles,
+            sorted: false,
+        }
+    }
+    pub fn from_basecount(base_count: BaseCount) -> Self {
+        let alleles: Vec<AlleleCount> = vec![
+                ('a', base_count.a()),
+                ('c', base_count.c()),
+                ('g', base_count.g()),
+                ('t', base_count.t())]
+            .into_iter()
+            .filter_map(|(k, v)| match v {
+                0 => None,
+                _ => Some(AlleleCount(k, v))
+            }).collect();
+        let mut allele_set = AlleleSet::new(alleles);
+        allele_set.sort();
+        allele_set
+    }
+
+    pub fn total_count(&self) -> usize {
+        self.alleles.iter()
+            .map(|AlleleCount(_, c)| c)
+            .sum()
+    }
+    pub fn len(&self) -> usize {
+        self.alleles.len()
+    }
+    pub fn sort(&mut self) {
+        if !self.sorted {
+            self.alleles.sort_by(|AlleleCount(_, a), AlleleCount(_, b)| b.cmp(a));
+            self.sorted = true;
+        }
     }
 }
 
@@ -286,7 +400,7 @@ impl SitePileup {
         (bases, indels)
     }
 
-    fn cleanup(&mut self, drop_n: bool, drop_del: bool) -> Result<usize> {
+    pub fn cleanup(&mut self, drop_n: bool, drop_del: bool) -> Option<usize> {
         let keep: Vec<bool> = self.bases.iter().enumerate()
             .map(|(i, b)| {
                 if drop_n == true {
@@ -312,12 +426,12 @@ impl SitePileup {
         if self.bases.len() > 0 {
             return Some(self.bases.len())
         }
-        return None)
+        return None
     }
 
     pub fn quality_filter(&mut self, min_bq: u8, min_mq: u8) -> Option<usize> {
         let keep: Vec<bool> = self.bases.iter().enumerate()
-            .map(|(i, b)| {
+            .map(|(i, _)| {
                 let bq = self.bqs[i];
                 let mq = self.mqs[i];
                 if bq >= min_bq && mq >= min_mq { true }

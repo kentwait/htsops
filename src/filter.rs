@@ -1,12 +1,13 @@
-#[macro_use]
-use bitflags;
+use bitflags::bitflags;
+
+use crate::pileup::{BaseCount, AlleleCount, AlleleFreq};
 
 
 pub struct FilterParameters {
     // Drop N and non ACGT bases
-    pub drop_n: bool
+    pub drop_n: bool,
     // Drop deleted bases
-    pub drop_del: bool
+    pub drop_del: bool,
     // Minimum base quality
     pub min_bq: u8,
     // Minimum mapping quality
@@ -25,7 +26,37 @@ pub struct FilterParameters {
 
 
 bitflags! {
-    struct FilterScore: u32 {
+    #[derive(Default)]
+    pub struct ControlFilterScore: u32 {
+        // At least one read after applying min bq and mq thresholds and drops
+        const PassedQualFilter      = 0b00000001;
+        // Greater than or equal to the min coverage post quality filtering
+        const PassedMinCov          = 0b00000010;
+        // Ratio between forward and reverse reads are within acceptable bounds
+        const PassedFRRatio         = 0b00000100;
+        // Site is solely composed of a single base
+        const InvariantSite         = 0b00001000;
+        // Site has variants but less than or equal to the max allowable number 
+        const PassedMaxVariantCount = 0b00010000;
+    }
+}
+
+
+pub struct ControlFilterResult {
+    // Bit flags indicating which filters passed
+    pub score: ControlFilterScore,
+    // Covarage post quality filtering and drops
+    pub cov: usize,
+    // Forward/reverse read ratio
+    pub fr_ratio: f32,
+    // List of alleles post filtering
+    pub alleles: Vec<AlleleFreq>,
+}
+
+
+bitflags! {
+    #[derive(Default)]
+    pub struct TargetFilterScore: u32 {
         // At least one read after applying min bq and mq thresholds and drops
         const PassedQualFilter    = 0b00000001;
         // Greater than or equal to the min coverage post quality filtering
@@ -33,18 +64,16 @@ bitflags! {
         // Ratio between forward and reverse reads are within acceptable bounds
         const PassedFRRatio       = 0b00000100;
         // Site is solely composed of a single base
-        const InvariantSite       = 0b00001000;
-        // Site has variants that is more than or equal to the minimum number 
-        const PassedMinMinorCount = 0b00010000;
+        const VariantSite         = 0b00001000;
         // Site has variants but less than or equal to the max allowable number 
-        const PassedMaxMinorCount = 0b00100000;
+        const PassedMaxOtherCount = 0b00010000;
     }
 }
 
 
-pub struct FilterResult {
+pub struct TargetFilterResult {
     // Bit flags indicating which filters passed
-    pub score: FilterScore,
+    pub score: TargetFilterScore,
     // Covarage post quality filtering and drops
     pub cov: usize,
     // Forward/reverse read ratio
@@ -66,24 +95,31 @@ pub struct SNVParameters {
     // Maximum total freq of other bases
     pub max_oaf: f64,
     // Maximum total count of other bases
-    pub min_oac: usize,
+    pub max_oac: usize,
     // Lower and upper bounds of acceptable 
     // forward/reverse read ratio of minor allele
     pub minor_fr_ratio_range: (f32, f32),
 }
 
-
-pub enum SNVCall{
-    NoMutation,
-    GermlineMutation,
-    SomaticMutation,
-    Deletion,
-    CopyNumberVariation,
-    Indeterminate,
+bitflags! {
+    #[derive(Default)]
+    pub struct SNVScore: u32 {
+        // At least one read after applying min bq and mq thresholds and drops
+        const PassedMinMaf       = 0b00000001;
+        // Greater than or equal to the min coverage post quality filtering
+        const PassedMinMac       = 0b00000010;
+        // Ratio between forward and reverse reads are within acceptable bounds
+        const PassedMaxOaf       = 0b00000100;
+        // Site is solely composed of a single base
+        const PassedMaxOac       = 0b00001000;
+        // Site has variants that is more than or equal to the minimum number 
+        const PassedMinorFRRatio = 0b00010000;
+    }
 }
 
 bitflags! {
-    struct SiteStatus: u32 { 
+    #[derive(Default)]
+    pub struct SiteStatus: u32 { 
         const Heterozygous     = 0b00000001;
         const GermlineMutation = 0b00000010;
         const SomaticMutation  = 0b00000100;
@@ -102,29 +138,7 @@ pub struct SNVResult {
     pub cov: usize,
     pub fr_ratio: f32,
     pub minor_fr_ratio: f32,
+    pub filter_score: TargetFilterScore,
+    pub snv_score: SNVScore,
     pub status: SiteStatus,
-}
-
-
-pub struct AlleleCount(char, usize);
-impl AlleleCount {
-    pub fn base(&self) -> &char { &self.0 }
-    pub fn base_index(&self) -> usize { 
-        match self.0.to_ascii_lowercase() {
-            'a' => 0,
-            'c' => 1,
-            'g' => 2,
-            't' => 3,
-            'n' => 4,
-            b => panic!("Invalid base [{}]", b),
-        }    
-    }
-    pub fn count(&self) -> usize { self.1}
-}
-
-
-pub struct AlleleFreq(char, f64);
-impl AlleleFreq {
-    pub fn base(&self) -> &char { &self.0 }
-    pub fn freq(&self) -> f64 { self.1}
 }
