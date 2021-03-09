@@ -1,8 +1,8 @@
 use bitflags::bitflags;
 
-use crate::pileup::{BaseCount, AlleleCount, AlleleFreq};
+use crate::pileup::AlleleCount;
 
-
+#[derive(Debug)]
 pub struct FilterParameters {
     // Drop N and non ACGT bases
     pub drop_n: bool,
@@ -41,7 +41,7 @@ bitflags! {
     }
 }
 
-
+#[derive(Debug)]
 pub struct ControlFilterResult {
     // Bit flags indicating which filters passed
     pub score: ControlFilterScore,
@@ -50,7 +50,7 @@ pub struct ControlFilterResult {
     // Forward/reverse read ratio
     pub fr_ratio: f32,
     // List of alleles post filtering
-    pub alleles: Vec<AlleleFreq>,
+    pub alleles: Vec<AlleleCount>,
 }
 
 
@@ -70,7 +70,7 @@ bitflags! {
     }
 }
 
-
+#[derive(Debug)]
 pub struct TargetFilterResult {
     // Bit flags indicating which filters passed
     pub score: TargetFilterScore,
@@ -79,21 +79,21 @@ pub struct TargetFilterResult {
     // Forward/reverse read ratio
     pub fr_ratio: f32,
     // List of alleles post filtering
-    pub alleles: Vec<AlleleFreq>,
+    pub alleles: Vec<AlleleCount>,
 }
 
-
+#[derive(Debug)]
 pub struct SNVParameters {
     // Major allele based on control
     pub major_allele: char,
     // Minor allele based on pooling
     pub minor_allele: char,
     // Minimum minor allele freq
-    pub min_maf: f64,
+    pub min_maf: f32,
     // Minimum minor allele count
     pub min_mac: usize,
     // Maximum total freq of other bases
-    pub max_oaf: f64,
+    pub max_oaf: f32,
     // Maximum total count of other bases
     pub max_oac: usize,
     // Lower and upper bounds of acceptable 
@@ -131,14 +131,13 @@ bitflags! {
     }
 }
 
-
+#[derive(Debug)]
 pub struct SNVResult {
-    pub major_allele: AlleleFreq,
-    pub minor_allele: Option<AlleleFreq>,
+    pub major_allele: AlleleCount,
+    pub minor_allele: Option<AlleleCount>,
     pub cov: usize,
     pub fr_ratio: f32,
     pub minor_fr_ratio: f32,
-    pub filter_score: TargetFilterScore,
     pub snv_score: SNVScore,
     pub status: SiteStatus,
 }

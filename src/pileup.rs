@@ -178,13 +178,13 @@ impl AlleleCount {
 
 
 #[derive(Debug)]
-pub struct AlleleFreq(char, f64);
+pub struct AlleleFreq(char, f32);
 impl AlleleFreq {
-    pub fn new(base: &char, freq: f64) -> Self {
+    pub fn new(base: &char, freq: f32) -> Self {
         AlleleFreq(base.to_owned(), freq)
     }
     pub fn base(&self) -> &char { &self.0 }
-    pub fn freq(&self) -> f64 { self.1}
+    pub fn freq(&self) -> f32 { self.1}
 }
 
 pub struct AlleleSet{
@@ -584,13 +584,13 @@ impl SpatialSitePileup {
 //     }
 
 //     pub fn total_depth(&self) -> u64 { self.f_depth + self.r_depth }
-//     pub fn depth_ratio(&self) -> f64 { self.f_depth as f64 / self.r_depth as f64 }
+//     pub fn depth_ratio(&self) -> f32 { self.f_depth as f32 / self.r_depth as f32 }
 
-//     pub fn mean_bq(&self) -> f64 {
-//         self.bq.iter().map(|i| *i as i64).sum::<i64>() as f64 / self.bq.len() as f64
+//     pub fn mean_bq(&self) -> f32 {
+//         self.bq.iter().map(|i| *i as i64).sum::<i64>() as f32 / self.bq.len() as f32
 //     }
-//     pub fn mean_mq(&self) -> f64 {
-//         self.mq.iter().map(|i| *i as i64).sum::<i64>() as f64 / self.mq.len() as f64
+//     pub fn mean_mq(&self) -> f32 {
+//         self.mq.iter().map(|i| *i as i64).sum::<i64>() as f32 / self.mq.len() as f32
 //     }
 
 //     pub fn new_empty(chrom: &str, pos: u64) -> PileupRecord {
@@ -1002,12 +1002,12 @@ impl SpatialSitePileup {
 //         }
 //     }
 
-//     pub fn freq_of_any(&self, base: char) -> f64 {
-//         (self.count_of_any(base) as f64) / (self.depth as f64)
+//     pub fn freq_of_any(&self, base: char) -> f32 {
+//         (self.count_of_any(base) as f32) / (self.depth as f32)
 //     }
 
-//     pub fn freq_of(&self, base: char) -> f64 {
-//         (self.count_of(base) as f64) / (self.depth as f64)
+//     pub fn freq_of(&self, base: char) -> f32 {
+//         (self.count_of(base) as f32) / (self.depth as f32)
 //     }
 
 // }
@@ -1015,9 +1015,9 @@ impl SpatialSitePileup {
 // #[derive(Debug)]
 // pub struct SNV {
 //     major_allele: char,
-//     major_freq: f64,
+//     major_freq: f32,
 //     minor_allele: char,
-//     minor_freq: f64,
+//     minor_freq: f32,
 // }
 
 // impl SNV {
@@ -1028,29 +1028,29 @@ impl SpatialSitePileup {
 //         } else {
 //             Some(SNV{
 //                 major_allele: sorted_bases[0].0,
-//                 major_freq: (sorted_bases[0].1 as f64) / (s.depth as f64),
+//                 major_freq: (sorted_bases[0].1 as f32) / (s.depth as f32),
 //                 minor_allele: sorted_bases[1].0,
-//                 minor_freq: (sorted_bases[1].1 as f64) / (s.depth as f64),
+//                 minor_freq: (sorted_bases[1].1 as f32) / (s.depth as f32),
 //             })
 //         }
 //     }
 
-//     pub fn threshold_call(s: &SiteSummary, threshold_cnt: Option<usize>, threshold_pct: Option<f64>) -> Option<SNV> {
+//     pub fn threshold_call(s: &SiteSummary, threshold_cnt: Option<usize>, threshold_pct: Option<f32>) -> Option<SNV> {
 //         let sorted_bases: Vec<(char, usize)> = SNV::sort_alleles(s);
 //         if sorted_bases[0].1 == s.depth {
 //             None
 //         } else {
 //             let minor_cnt = sorted_bases[1].1;
-//             let minor_freq = (minor_cnt as f64) / (s.depth as f64);
+//             let minor_freq = (minor_cnt as f32) / (s.depth as f32);
 //             let threshold_cnt = threshold_cnt.unwrap_or(0);
 //             let threshold_pct = threshold_pct.unwrap_or(0.);
 //             if minor_cnt > threshold_cnt {
 //                 if minor_freq > threshold_pct {
 //                     return Some(SNV{
 //                         major_allele: sorted_bases[0].0,
-//                         major_freq: (sorted_bases[0].1 as f64) / (s.depth as f64),
+//                         major_freq: (sorted_bases[0].1 as f32) / (s.depth as f32),
 //                         minor_allele: sorted_bases[1].0,
-//                         minor_freq: (sorted_bases[1].1 as f64) / (s.depth as f64),
+//                         minor_freq: (sorted_bases[1].1 as f32) / (s.depth as f32),
 //                     });
 //                 } else {
 //                     None
@@ -1104,14 +1104,14 @@ impl SpatialSitePileup {
 // pub struct PairedSNVCall {
 //     // target alleles and frequency
 //     target_major_allele: char,
-//     target_major_freq: f64,
+//     target_major_freq: f32,
 //     target_minor_allele: Option<char>,
-//     target_minor_freq: f64,
+//     target_minor_freq: f32,
 //     // control alleles and frequency
 //     control_major_allele: char,
-//     control_major_freq: f64,
+//     control_major_freq: f32,
 //     control_minor_allele: Option<char>,
-//     control_minor_freq: f64,
+//     control_minor_freq: f32,
 //     call: SNVCallType,
 // }
 
@@ -1137,9 +1137,9 @@ impl SpatialSitePileup {
 //                     target_minor_freq: 0.0,
 //                     // control alleles and frequency
 //                     control_major_allele: sorted_control[0].0,
-//                     control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//                     control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //                     control_minor_allele: Some(sorted_control[1].0),
-//                     control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//                     control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //                     call: SNVCallType::False,
 //                 })
 //             }
@@ -1148,9 +1148,9 @@ impl SpatialSitePileup {
 //                 // Control has 0 variants so target SNV is likely true
 //                 return Some(PairedSNVCall{
 //                     target_major_allele: sorted_target[0].0,
-//                     target_major_freq: (sorted_target[0].1 as f64) / (target.depth as f64),
+//                     target_major_freq: (sorted_target[0].1 as f32) / (target.depth as f32),
 //                     target_minor_allele: Some(sorted_target[1].0),
-//                     target_minor_freq: (sorted_target[1].1 as f64) / (target.depth as f64),
+//                     target_minor_freq: (sorted_target[1].1 as f32) / (target.depth as f32),
 //                     // control alleles and frequency
 //                     control_major_allele: sorted_control[0].0,
 //                     control_major_freq: 1.0,
@@ -1163,14 +1163,14 @@ impl SpatialSitePileup {
 //                 // it is the same variant then target SNV is probably false
 //                 return Some(PairedSNVCall{
 //                     target_major_allele: sorted_target[0].0,
-//                     target_major_freq: (sorted_target[0].1 as f64) / (target.depth as f64),
+//                     target_major_freq: (sorted_target[0].1 as f32) / (target.depth as f32),
 //                     target_minor_allele: Some(sorted_target[1].0),
-//                     target_minor_freq: (sorted_target[1].1 as f64) / (target.depth as f64),
+//                     target_minor_freq: (sorted_target[1].1 as f32) / (target.depth as f32),
 //                     // control alleles and frequency
 //                     control_major_allele: sorted_control[0].0,
-//                     control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//                     control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //                     control_minor_allele: Some(sorted_control[1].0),
-//                     control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//                     control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //                     call: SNVCallType::ProbablyFalse,
 //                 })
 //             }
@@ -1179,14 +1179,14 @@ impl SpatialSitePileup {
 //             // then the target SNV is considered false
 //             return Some(PairedSNVCall{
 //                 target_major_allele: sorted_target[0].0,
-//                 target_major_freq: (sorted_target[0].1 as f64) / (target.depth as f64),
+//                 target_major_freq: (sorted_target[0].1 as f32) / (target.depth as f32),
 //                 target_minor_allele: Some(sorted_target[1].0),
-//                 target_minor_freq: (sorted_target[1].1 as f64) / (target.depth as f64),
+//                 target_minor_freq: (sorted_target[1].1 as f32) / (target.depth as f32),
 //                 // control alleles and frequency
 //                 control_major_allele: sorted_control[0].0,
-//                 control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//                 control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //                 control_minor_allele: Some(sorted_control[1].0),
-//                 control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//                 control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //                 call: SNVCallType::False,
 //             })  
 //         }
@@ -1206,9 +1206,9 @@ impl SpatialSitePileup {
 //                 target_minor_freq: 0.0,
 //                 // control alleles and frequency
 //                 control_major_allele: sorted_control[0].0,
-//                 control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//                 control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //                 control_minor_allele: Some(sorted_control[1].0),
-//                 control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//                 control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //                 call: SNVCallType::False,
 //             }) 
 //         }
@@ -1216,21 +1216,21 @@ impl SpatialSitePileup {
 //         // Target and control have minor alleles
 //         return Some(PairedSNVCall{
 //             target_major_allele: sorted_target[0].0,
-//             target_major_freq: (sorted_target[0].1 as f64) / (target.depth as f64),
+//             target_major_freq: (sorted_target[0].1 as f32) / (target.depth as f32),
 //             target_minor_allele: Some(sorted_target[1].0),
-//             target_minor_freq: (sorted_target[1].1 as f64) / (target.depth as f64),
+//             target_minor_freq: (sorted_target[1].1 as f32) / (target.depth as f32),
 //             // control alleles and frequency
 //             control_major_allele: sorted_control[0].0,
-//             control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//             control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //             control_minor_allele: Some(sorted_control[1].0),
-//             control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//             control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //             call: SNVCallType::False,
 //         })
 //     }
 
 //     pub fn threshold_call(target: &SiteSummary, control: &SiteSummary,
-//             threshold_target_cnt: Option<usize>, threshold_target_freq: Option<f64>,
-//             threshold_control_cnt: Option<usize>, threshold_control_freq: Option<f64>) -> Option<PairedSNVCall> {
+//             threshold_target_cnt: Option<usize>, threshold_target_freq: Option<f32>,
+//             threshold_control_cnt: Option<usize>, threshold_control_freq: Option<f32>) -> Option<PairedSNVCall> {
 
 //         let threshold_target_cnt = threshold_target_cnt.unwrap_or(0);
 //         let threshold_target_freq = threshold_target_freq.unwrap_or(0.);
@@ -1242,17 +1242,17 @@ impl SpatialSitePileup {
 
 //         let target_maj_allele = sorted_target[0].0;
 //         let target_maj_cnt = sorted_target[0].1;
-//         let target_maj_freq = (sorted_target[0].1 as f64) / (target.depth as f64);
+//         let target_maj_freq = (sorted_target[0].1 as f32) / (target.depth as f32);
 //         let target_min_allele = sorted_target[1].0;
 //         let target_min_cnt = sorted_target[1].1;
-//         let target_min_freq = (sorted_target[1].1 as f64) / (target.depth as f64);
+//         let target_min_freq = (sorted_target[1].1 as f32) / (target.depth as f32);
 
 //         let control_maj_allele = sorted_control[0].0;
 //         let control_maj_cnt = sorted_control[0].1;
-//         let control_maj_freq = (sorted_control[0].1 as f64) / (control.depth as f64);
+//         let control_maj_freq = (sorted_control[0].1 as f32) / (control.depth as f32);
 //         let control_min_allele = sorted_control[1].0;
 //         let control_min_cnt = sorted_control[1].1;
-//         let control_min_freq = (sorted_control[1].1 as f64) / (control.depth as f64);
+//         let control_min_freq = (sorted_control[1].1 as f32) / (control.depth as f32);
 
 //         // Target and control have the same major allele
 //         if target_maj_allele == control_maj_allele {
@@ -1275,9 +1275,9 @@ impl SpatialSitePileup {
 //                     target_minor_freq: 0.0,
 //                     // control alleles and frequency
 //                     control_major_allele: sorted_control[0].0,
-//                     control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//                     control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //                     control_minor_allele: Some(sorted_control[1].0),
-//                     control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//                     control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //                     call: SNVCallType::False,
 //                 })
 //             }
@@ -1286,9 +1286,9 @@ impl SpatialSitePileup {
 //             if (control_min_cnt <= threshold_control_cnt) || (control_min_freq <= threshold_control_freq) {
 //                 return Some(PairedSNVCall{
 //                     target_major_allele: sorted_target[0].0,
-//                     target_major_freq: (sorted_target[0].1 as f64) / (target.depth as f64),
+//                     target_major_freq: (sorted_target[0].1 as f32) / (target.depth as f32),
 //                     target_minor_allele: Some(sorted_target[1].0),
-//                     target_minor_freq: (sorted_target[1].1 as f64) / (target.depth as f64),
+//                     target_minor_freq: (sorted_target[1].1 as f32) / (target.depth as f32),
 //                     // control alleles and frequency
 //                     control_major_allele: sorted_control[0].0,
 //                     control_major_freq: 1.0,
@@ -1301,14 +1301,14 @@ impl SpatialSitePileup {
 //                 // it is the same variant then target SNV is probably false
 //                 return Some(PairedSNVCall{
 //                     target_major_allele: sorted_target[0].0,
-//                     target_major_freq: (sorted_target[0].1 as f64) / (target.depth as f64),
+//                     target_major_freq: (sorted_target[0].1 as f32) / (target.depth as f32),
 //                     target_minor_allele: Some(sorted_target[1].0),
-//                     target_minor_freq: (sorted_target[1].1 as f64) / (target.depth as f64),
+//                     target_minor_freq: (sorted_target[1].1 as f32) / (target.depth as f32),
 //                     // control alleles and frequency
 //                     control_major_allele: sorted_control[0].0,
-//                     control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//                     control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //                     control_minor_allele: Some(sorted_control[1].0),
-//                     control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//                     control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //                     call: SNVCallType::ProbablyFalse,
 //                 })
 //             }
@@ -1317,14 +1317,14 @@ impl SpatialSitePileup {
 //             // then the target SNV is considered false
 //             return Some(PairedSNVCall{
 //                 target_major_allele: sorted_target[0].0,
-//                 target_major_freq: (sorted_target[0].1 as f64) / (target.depth as f64),
+//                 target_major_freq: (sorted_target[0].1 as f32) / (target.depth as f32),
 //                 target_minor_allele: Some(sorted_target[1].0),
-//                 target_minor_freq: (sorted_target[1].1 as f64) / (target.depth as f64),
+//                 target_minor_freq: (sorted_target[1].1 as f32) / (target.depth as f32),
 //                 // control alleles and frequency
 //                 control_major_allele: sorted_control[0].0,
-//                 control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//                 control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //                 control_minor_allele: Some(sorted_control[1].0),
-//                 control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//                 control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //                 call: SNVCallType::False,
 //             })  
 //         }
@@ -1344,9 +1344,9 @@ impl SpatialSitePileup {
 //                 target_minor_freq: 0.0,
 //                 // control alleles and frequency
 //                 control_major_allele: sorted_control[0].0,
-//                 control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//                 control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //                 control_minor_allele: Some(sorted_control[1].0),
-//                 control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//                 control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //                 call: SNVCallType::False,
 //             }) 
 //         }
@@ -1354,14 +1354,14 @@ impl SpatialSitePileup {
 //         // Target and control have minor alleles
 //         return Some(PairedSNVCall{
 //             target_major_allele: sorted_target[0].0,
-//             target_major_freq: (sorted_target[0].1 as f64) / (target.depth as f64),
+//             target_major_freq: (sorted_target[0].1 as f32) / (target.depth as f32),
 //             target_minor_allele: Some(sorted_target[1].0),
-//             target_minor_freq: (sorted_target[1].1 as f64) / (target.depth as f64),
+//             target_minor_freq: (sorted_target[1].1 as f32) / (target.depth as f32),
 //             // control alleles and frequency
 //             control_major_allele: sorted_control[0].0,
-//             control_major_freq: (sorted_control[0].1 as f64) / (control.depth as f64),
+//             control_major_freq: (sorted_control[0].1 as f32) / (control.depth as f32),
 //             control_minor_allele: Some(sorted_control[1].0),
-//             control_minor_freq: (sorted_control[1].1 as f64) / (control.depth as f64),
+//             control_minor_freq: (sorted_control[1].1 as f32) / (control.depth as f32),
 //             call: SNVCallType::False,
 //         })
 //     }
@@ -1383,14 +1383,14 @@ impl SpatialSitePileup {
 //     // Sample values are stored in the same order as the sample names
 //     sample: Vec<String>,
 //     sample_major_allele: char,
-//     sample_major_freq: Vec<f64>,
+//     sample_major_freq: Vec<f32>,
 //     sample_minor_allele: Option<char>,
-//     sample_minor_freq: Vec<f64>,
+//     sample_minor_freq: Vec<f32>,
 //     // control alleles and frequency
 //     control_major_allele: char,
-//     control_major_freq: f64,
+//     control_major_freq: f32,
 //     control_minor_allele: Option<char>,
-//     control_minor_freq: f64,
+//     control_minor_freq: f32,
 //     call: SNVCallType,
 // }
 
@@ -1402,8 +1402,8 @@ impl SpatialSitePileup {
 //     }
 
 //     pub fn pooled_threshold_call(samples: &Vec<&SiteSummary>, control: &SiteSummary,
-//             threshold_target_cnt: Option<usize>, threshold_target_freq: Option<f64>,
-//             threshold_control_cnt: Option<usize>, threshold_control_freq: Option<f64>) -> Option<PairedSNVCall> {
+//             threshold_target_cnt: Option<usize>, threshold_target_freq: Option<f32>,
+//             threshold_control_cnt: Option<usize>, threshold_control_freq: Option<f32>) -> Option<PairedSNVCall> {
 //         // pool SiteSummary vec into one and call as PairedSNVCall
 //         let pooled_target = SiteSummary::pool(samples);
 //         PairedSNVCall::threshold_call(&pooled_target, control, 
@@ -1439,8 +1439,8 @@ impl SpatialSitePileup {
 //             if let Some(target_minor_allele) = pc.target_minor_allele {
 //                 // Iterate over
 //                 // let mut sample: Vec<String> = Vec::with_capacity(samples.len());
-//                 let mut sample_major_freq: Vec<f64> = Vec::with_capacity(samples.len());
-//                 let mut sample_minor_freq: Vec<f64> = Vec::with_capacity(samples.len());
+//                 let mut sample_major_freq: Vec<f32> = Vec::with_capacity(samples.len());
+//                 let mut sample_minor_freq: Vec<f32> = Vec::with_capacity(samples.len());
 
 //                 let mut min_allele_present: Vec<usize> = Vec::new();
 
@@ -1494,8 +1494,8 @@ impl SpatialSitePileup {
 //     }
 
 //     pub fn threshold_call(samples: &Vec<&SiteSummary>, control: &SiteSummary,
-//             threshold_target_cnt: Option<usize>, threshold_target_freq: Option<f64>,
-//             threshold_control_cnt: Option<usize>, threshold_control_freq: Option<f64>) -> Option<MultiPairedSNVCall> {
+//             threshold_target_cnt: Option<usize>, threshold_target_freq: Option<f32>,
+//             threshold_control_cnt: Option<usize>, threshold_control_freq: Option<f32>) -> Option<MultiPairedSNVCall> {
 //         // Make pooled basic call first to establish major-minor alleles
 //         if let Some(pc) = MultiPairedSNVCall::pooled_threshold_call(
 //             samples, control,
@@ -1526,8 +1526,8 @@ impl SpatialSitePileup {
 //             if let Some(target_minor_allele) = pc.target_minor_allele {
 //                 // Iterate over
 //                 // let mut sample: Vec<String> = Vec::with_capacity(samples.len());
-//                 let mut sample_major_freq: Vec<f64> = Vec::with_capacity(samples.len());
-//                 let mut sample_minor_freq: Vec<f64> = Vec::with_capacity(samples.len());
+//                 let mut sample_major_freq: Vec<f32> = Vec::with_capacity(samples.len());
+//                 let mut sample_minor_freq: Vec<f32> = Vec::with_capacity(samples.len());
 
 //                 let mut min_allele_present: Vec<usize> = Vec::new();
 //                 let threshold_target_freq = threshold_target_freq.unwrap_or(0.0);
