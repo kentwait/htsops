@@ -9,6 +9,70 @@ use htsops::filter::{FilterParameters, ControlFilterScore, TargetFilterScore, Co
 use htsops::filter::{SNVParameters, SNVScore, SiteStatus, SNVResult};
 
 
+// # Pass 1 columns
+// chr
+// pos
+// major_char
+// minor_char
+// control_filt_bitscore
+// control_fr_ratio
+// control_basecount A:a:C:c:G:g:T:t
+// pooled_fr_ratio
+// pooled_major_fr_ratio
+// pooled_minor_fr_ratio
+// pooled_basecount A:a:C:c:G:g:T:t
+// pooled_bias_fisher
+// sample_name
+// sample_filt_bitscore
+// sample_snv_bitscore
+// sample_fr_ratio
+// sample_major_fr_ratio
+// sample_minor_fr_ratio
+// sample_basecount A:a:C:c:G:g:T:t
+// sample_bias_fisher
+// passed_samples_bitscore
+// # Header
+// colum names
+// control_filt_score guide
+// sample_filt_score guide
+// sample_snv_score guide
+// control_filt params
+// sample_filt params
+// sample_snv params
+// # Footer
+// for each sample: for each chromosome: coverage depth mean, variance, 95%CI
+// for each sample: binned coverage depth 0 to 100 percentile, in 10 percentile increments
+// for each sample: binned coverage depth vs fr_ratio
+// for each sample: binned coverage depth vs ma_fr_ratio
+// for each sample: binned coverage depth vs sample_bias_fisher
+// major->minor vs count and freq
+// passed_samples_bitscore vs count and frequency
+
+// # Pass 2 columns
+// chr
+// pos
+// major_char
+// minor_char
+// control_filt_bitscore
+// control_fr_ratio
+// control_basecount A:a:C:c:G:g:T:t
+// pooled_fr_ratio
+// pooled_major_fr_ratio
+// pooled_minor_fr_ratio
+// pooled_basecount A:a:C:c:G:g:T:t
+// pooled_bias_fisher
+// sample_name
+// sample_filt_bitscore
+// sample_snv_bitscore
+// sample_fr_ratio
+// sample_major_fr_ratio
+// sample_minor_fr_ratio
+// sample_basecount A:a:C:c:G:g:T:t
+// sample_bias_fisher
+// passed_samples_bitscore
+// passed_site_bitscores
+
+
 fn filter_control(pileup: &mut SitePileup, params: &FilterParameters) -> ControlFilterResult {
     let mut score: ControlFilterScore = Default::default();
     // Drop Ns and/or drop deletions
