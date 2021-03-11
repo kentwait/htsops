@@ -40,3 +40,4 @@ serde = { version = "1.0.123" }
 # flate2 = { version = "1.0.20" }
 # sled = { version = "0.34.6" }
 bitflags = { version = "1.2" }
+fishers_exact = { version = "1.0" }

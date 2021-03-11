@@ -109,7 +109,6 @@ impl Add<&FullBaseCount> for &FullBaseCount {
 }
 
 
-
 #[derive(Debug)]
 pub struct BaseCount(usize, usize, usize, usize);
 impl BaseCount {
@@ -233,21 +232,23 @@ impl AlleleSet {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SitePileup {
-    pub bases: Vec<char>, 
+    pub sample_name: String,
+    pub bases: Vec<char>,
     pub indels: HashMap<String, usize>,
     pub bqs: Vec<u8>, 
     pub mqs: Vec<u8>,
 }
 impl SitePileup {
-    pub fn from_str(ref_char: &char, cov: usize, base_str: &str, 
+    pub fn from_str(sample_name: &str, ref_char: &char, cov: usize, base_str: &str, 
             bq_str: &str, mq_str: &str) -> SitePileup {
         // Immediately return if base_str is "*" which means empty
+        let sample_name = sample_name.to_owned();
         if base_str == "*" {
             let bases = Vec::new();
             let indels = HashMap::new();
             let bqs = Vec::new();
             let mqs = Vec::new();
-            return SitePileup{ bases, indels, bqs, mqs }
+            return SitePileup{ sample_name, bases, indels, bqs, mqs }
         }
         let (mut bases, indels) = SitePileup::parse_base_str(base_str, ref_char);
         let mut bqs = SitePileup::parse_qual_str(bq_str);
@@ -281,7 +282,7 @@ impl SitePileup {
             let mut i = 0;
             mqs.retain(|_| (keep[i], i += 1).0);
         }
-        SitePileup{ bases, indels, bqs, mqs }
+        SitePileup{ sample_name, bases, indels, bqs, mqs }
     }
 
     // TODO: transform this into an iterator
@@ -495,37 +496,32 @@ pub struct SpatialSitePileup {
     pub chrom: String, 
     pub pos: u64, 
     pub ref_char: char,
-    pub pileups: HashMap<String, SitePileup>,
+    pub control_pileup: SitePileup,
+    pub pileups: Vec<SitePileup>,
 }
 
 impl SpatialSitePileup {
-    // TODO: Add hasmap of sample_list and 2d coords
-    pub fn empty_pileup(chrom: &str, pos: u64, ref_char: &char) -> SpatialSitePileup {
-        let chrom: String = chrom.to_owned();
-        let pos: u64 = pos.clone();
-        let ref_char: char = ref_char.to_owned();
-        let pileups: HashMap<String, SitePileup> = HashMap::new();
-
-        SpatialSitePileup{ chrom, pos, ref_char, pileups }
-    }
-
     // TODO: Change sample_list to hasmap of sample_list and 2d coords
-    pub fn parse_mpileup_row(row: &str, sample_list: &Vec<&str>) -> SpatialSitePileup {
+    pub fn parse_mpileup_row(row: &str, sample_list: &Vec<&str>, control_name: &str) -> SpatialSitePileup {
         let cols: Vec<String> = row.split('\t').map(|s| s.to_owned()).collect();
         let chrom: String = cols[0].to_owned();
         let pos: u64 = cols[1].parse::<u64>().unwrap();
         let ref_char: char = cols[2].chars().next().unwrap();
         
         // ENHANCEMENT: Spawn multiple threads and let each thread work with one group of cols
-        let pileups: HashMap<String, SitePileup> = sample_list.iter().enumerate()
+        let mut control_idx = 0;
+        let mut pileups: Vec<SitePileup> = sample_list.iter().enumerate()
             .map(|(i, &sample_name)| {
-                let site_pileup = SitePileup::from_str(
+                if sample_name == control_name {
+                    control_idx = i;
+                }
+                SitePileup::from_str(
+                    sample_name,
                     &ref_char, (&cols[3+(i*4)]).parse::<usize>().unwrap(),
-                    &cols[4+(i*4)], &cols[5+(i*4)], &cols[6+(i*4)]);
-                (sample_name.to_owned(), site_pileup)
+                    &cols[4+(i*4)], &cols[5+(i*4)], &cols[6+(i*4)])
             }).collect();
-        
-            SpatialSitePileup{ chrom, pos, ref_char, pileups }
+        let control_pileup = pileups.remove(control_idx);
+        SpatialSitePileup{ chrom, pos, ref_char, control_pileup, pileups }
     }
 }
 

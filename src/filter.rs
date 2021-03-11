@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 
-use crate::pileup::AlleleCount;
+use crate::pileup::{AlleleCount, FullBaseCount};
 
 #[derive(Debug)]
 pub struct FilterParameters {
@@ -27,7 +27,7 @@ pub struct FilterParameters {
 
 bitflags! {
     #[derive(Default)]
-    pub struct ControlFilterScore: u32 {
+    pub struct ControlFilterScore: usize {
         // At least one read after applying min bq and mq thresholds and drops
         const PassedQualFilter      = 0b00000001;
         // Greater than or equal to the min coverage post quality filtering
@@ -40,6 +40,9 @@ bitflags! {
         const PassedMaxVariantCount = 0b00010000;
     }
 }
+impl ControlFilterScore {
+    pub fn to_bits(&self) -> usize { self.bits }
+}
 
 #[derive(Debug)]
 pub struct ControlFilterResult {
@@ -49,14 +52,20 @@ pub struct ControlFilterResult {
     pub cov: usize,
     // Forward/reverse read ratio
     pub fr_ratio: f32,
+    pub full_base_count: FullBaseCount,
     // List of alleles post filtering
     pub alleles: Vec<AlleleCount>,
+}
+impl ControlFilterResult {
+    pub fn naive_major_allele(&self) -> &char {
+        &self.alleles[0].base()
+    }
 }
 
 
 bitflags! {
     #[derive(Default)]
-    pub struct TargetFilterScore: u32 {
+    pub struct TargetFilterScore: usize {
         // At least one read after applying min bq and mq thresholds and drops
         const PassedQualFilter    = 0b00000001;
         // Greater than or equal to the min coverage post quality filtering
@@ -68,6 +77,9 @@ bitflags! {
         // Site has variants but less than or equal to the max allowable number 
         const PassedMaxOtherCount = 0b00010000;
     }
+}
+impl TargetFilterScore {
+    pub fn to_bits(&self) -> usize { self.bits }
 }
 
 #[derive(Debug)]
@@ -84,10 +96,6 @@ pub struct TargetFilterResult {
 
 #[derive(Debug)]
 pub struct SNVParameters {
-    // Major allele based on control
-    pub major_allele: char,
-    // Minor allele based on pooling
-    pub minor_allele: char,
     // Minimum minor allele freq
     pub min_maf: f32,
     // Minimum minor allele count
@@ -103,7 +111,7 @@ pub struct SNVParameters {
 
 bitflags! {
     #[derive(Default)]
-    pub struct SNVScore: u32 {
+    pub struct SNVScore: usize {
         // At least one read after applying min bq and mq thresholds and drops
         const PassedMinMaf       = 0b00000001;
         // Greater than or equal to the min coverage post quality filtering
@@ -116,10 +124,13 @@ bitflags! {
         const PassedMinorFRRatio = 0b00010000;
     }
 }
+impl SNVScore {
+    pub fn to_bits(&self) -> usize { self.bits }
+}
 
 bitflags! {
     #[derive(Default)]
-    pub struct SiteStatus: u32 { 
+    pub struct SiteStatus: usize { 
         const Heterozygous     = 0b00000001;
         const GermlineMutation = 0b00000010;
         const SomaticMutation  = 0b00000100;
@@ -129,6 +140,9 @@ bitflags! {
         const MultipleAlleles  = 0b01000000;
         const Indeterminate    = 0b10000000;
     }
+}
+impl SiteStatus {
+    pub fn to_bits(&self) -> usize { self.bits }
 }
 
 #[derive(Debug)]

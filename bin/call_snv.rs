@@ -1,13 +1,14 @@
-#[macro_use]
 use std::path::Path;
 use std::collections::HashMap;
+use std::env;
+use std::fs::File;
+use std::io::{self, BufRead};
+
 use rust_htslib::tbx::{self, Read as TbxRead};
 
-use htsops::pileup::{SitePileup, SpatialSitePileup};
-use htsops::pileup::{BaseCount, FullBaseCount, AlleleCount, AlleleFreq, AlleleSet};
-use htsops::filter::{FilterParameters, ControlFilterScore, TargetFilterScore, ControlFilterResult, TargetFilterResult};
-use htsops::filter::{SNVParameters, SNVScore, SiteStatus, SNVResult};
-
+use htsops::caller::{filter_control, quality_clean_pileups, check_snv_regionwide};
+use htsops::filter::{FilterParameters, SNVParameters, TargetFilterScore, SNVScore};
+use htsops::pileup::SpatialSitePileup;
 
 // # Pass 1 columns
 // chr
@@ -73,268 +74,86 @@ use htsops::filter::{SNVParameters, SNVScore, SiteStatus, SNVResult};
 // passed_site_bitscores
 
 
-fn filter_control(pileup: &mut SitePileup, params: &FilterParameters) -> ControlFilterResult {
-    let mut score: ControlFilterScore = Default::default();
-    // Drop Ns and/or drop deletions
-    if params.drop_n || params.drop_del {
-        pileup.cleanup(params.drop_n, params.drop_del);
-    }
-    // Quality filter
-    // Minimum coverage post filter
-    let cov: usize = if let Some(c) = pileup.quality_filter(params.min_bq, params.min_mq) {
-        if c > 0 { score.insert(ControlFilterScore::PassedQualFilter) }
-        if c >= params.min_cov { score.insert(ControlFilterScore::PassedMinCov) }
-        c
-    } else {
-        0
-    };
-    // Check if site in control has a variant
-    // Currently works only for homozygous sites
-    let allele_set = AlleleSet::from_basecount(pileup.base_count());
-    let total_count = allele_set.total_count() as f32;
-    match allele_set.len() {
-        // 0 => panic!("No alleles present. Possibly empty pileup?"),
-        0 => (),
-        1 => {
-            score.insert(ControlFilterScore::InvariantSite);
-            score.insert(ControlFilterScore::PassedMaxVariantCount);
-        },
-        _ => {
-            if (allele_set.len() == 2) && (allele_set.alleles[1].count() < params.max_minor_ac) {
-                score.insert(ControlFilterScore::InvariantSite);
-                score.insert(ControlFilterScore::PassedMaxVariantCount);
-            }
-        },
-    };
-    // Check forward/reverse balance
-    let fr_ratio = pileup.fr_ratio();
-    if fr_ratio > params.fr_ratio_range.0 && fr_ratio < params.fr_ratio_range.1 {
-        score.insert(ControlFilterScore::PassedFRRatio);
-    }
-    // Return result
-    ControlFilterResult {
-        score,
-        cov,
-        fr_ratio,
-        alleles: allele_set.alleles.iter().map(|a| AlleleCount::new(a.base(), a.count())).collect(),
-    }
-}
 
-fn quality_clean_pileup(pileup: &mut SitePileup, params: &FilterParameters) {
-    if params.drop_n || params.drop_del { 
-        pileup.cleanup(params.drop_n, params.drop_del);
-    }
-    pileup.quality_filter(params.min_bq, params.min_mq);
-}
-
-enum MinorAlleleCall {
-    Some(char),
-    None,
-    Indeterminate,
-}
-
-fn call_regionwide_minor_allele(multi_pileup: &mut SpatialSitePileup, sample_names: &Vec<&str>, major_allele: &char) -> MinorAlleleCall {
-    let mut base_count: BaseCount = BaseCount::empty();
-    for sample_name in sample_names.iter() {
-        let pileup = multi_pileup.pileups.get_mut(*sample_name).unwrap();
-        base_count = base_count + pileup.base_count();
-    }
-    // Determine region-wide major and minor allele
-    // Major is based on control allele, 
-    // this must also be the top in the pooled
-    // Minor is second highest overall
-    // Major + minor should be greater than 98% of total coverage
-    let allele_set: AlleleSet = AlleleSet::from_basecount(base_count);
-    let total = allele_set.total_count();
-    if allele_set.len() == 0 {
-        panic!("No alleles present. Possibly empty pileup?")
-    }
-    if major_allele != allele_set.alleles[0].base() {
-        panic!("Major allele in control [{}] and target pool [{}] do not match", 
-            major_allele, allele_set.alleles[0].base());
-    }
-    match allele_set.len() {
-        1 => MinorAlleleCall::None,
-        2 => {
-            if (allele_set.alleles[1].count() as f32 / total as f32) < 0.02 {
-                MinorAlleleCall::None
-            } else {
-                MinorAlleleCall::Some(allele_set.alleles[1].base().to_owned())
-            }
-        },
-        _ => {
-            let total_count = allele_set.total_count() as f32;
-            let major_minor_sum = (allele_set.alleles[0].count() + allele_set.alleles[1].count()) as f32;
-            if (allele_set.alleles[1].count() as f32 / total as f32) < 0.02 {
-                MinorAlleleCall::Indeterminate
-            } else if major_minor_sum / total_count >= 0.98 {
-                MinorAlleleCall::Some(allele_set.alleles[1].base().to_owned())
-            } else {
-                MinorAlleleCall::Indeterminate
-            }
-        },
-    }
-}
-
-fn filter_target(pileup: &mut SitePileup, params: &FilterParameters) -> TargetFilterScore {
-    let mut score: TargetFilterScore = Default::default();
-    // Quality filter
-    if pileup.cov() > 0 {
-        score.insert(TargetFilterScore::PassedQualFilter);
-    }
-    if pileup.cov() >= params.min_minor_ac {
-        score.insert(TargetFilterScore::PassedMinCov);
-    }
-    // FR balance filter
-    let fr_ratio = pileup.fr_ratio();
-    if fr_ratio > params.fr_ratio_range.0 && fr_ratio < params.fr_ratio_range.1 {
-        score.insert(TargetFilterScore::PassedFRRatio);
-    }
-    // Call alleles
-    let allele_set = AlleleSet::from_basecount(pileup.base_count());
-    let total_count = allele_set.total_count() as f32;
-    match allele_set.len() {
-        0 => (),
-        1 => (),
-        2 => {
-            score.insert(TargetFilterScore::VariantSite);
-            score.insert(TargetFilterScore::PassedMaxOtherCount);
-        },
-        _ => {
-            score.insert(TargetFilterScore::VariantSite);
-            // Check if the total of other variants is less than the maximum
-            if allele_set.alleles.iter().skip(2).map(|a| a.count()).sum::<usize>() < params.max_minor_ac {
-                score.insert(TargetFilterScore::PassedMaxOtherCount);
-            }
-        },
-    }; 
-    score
-}
-
-fn call_target_snv(pileup: &mut SitePileup, params: &SNVParameters) -> Option<SNVResult> {
-    let mut score: SNVScore = Default::default();
-
-    // Call alleles
-    let full_base_count = pileup.full_base_count();
-    let total = full_base_count.total();
-    let major_allele_count: usize = match params.major_allele {
-        'a' => full_base_count.a(),
-        'c' => full_base_count.c(),
-        'g' => full_base_count.g(),
-        't' => full_base_count.t(),
-        _ => panic!("")
-    };
-    let minor_allele_count: usize = match params.minor_allele {
-        'a' => full_base_count.a(),
-        'c' => full_base_count.c(),
-        'g' => full_base_count.g(),
-        't' => full_base_count.t(),
-        _ => panic!("")
-    };
-    let minor_allele_freq = (minor_allele_count as f32) / (total  as f32);
-
-    // Minimum minor allele count
-    if minor_allele_count >= params.min_mac { score.insert(SNVScore::PassedMinMac) }
-
-    // Minimum minor allele frequency
-    if minor_allele_freq >= params.min_maf { score.insert(SNVScore::PassedMinMaf) }
-
-    let other_allele_count: usize = match (params.major_allele, params.minor_allele) {
-        ('a', 'c') => full_base_count.g() + full_base_count.t(),
-        ('a', 'g') => full_base_count.c() + full_base_count.t(),
-        ('a', 't') => full_base_count.c() + full_base_count.g(),
-
-        ('c', 'a') => full_base_count.g() + full_base_count.t(),
-        ('c', 'g') => full_base_count.a() + full_base_count.t(),
-        ('c', 't') => full_base_count.a() + full_base_count.g(),
-
-        ('g', 'a') => full_base_count.c() + full_base_count.t(),
-        ('g', 'c') => full_base_count.a() + full_base_count.t(),
-        ('g', 't') => full_base_count.a() + full_base_count.c(),
-
-        ('t', 'a') => full_base_count.c() + full_base_count.g(),
-        ('t', 'c') => full_base_count.a() + full_base_count.g(),
-        ('t', 'g') => full_base_count.a() + full_base_count.c(),
-
-        _ => panic!("")
-    };
-    // Maximum other allele count
-    if other_allele_count < params.max_oac { score.insert(SNVScore::PassedMaxOac) }
-
-    // Maximum other allele frequency
-    if (other_allele_count as f32 / params.max_oaf) < params.max_oaf { score.insert(SNVScore::PassedMaxOaf) }
-
-    // Within forward/reverse ratio
-    // FR balance filter
-    let fr_ratio = pileup.fr_ratio();
-    let minor_fr_ratio: f32 = match params.major_allele {
-        'a' => (full_base_count.f_a() as f32) / (full_base_count.a() as f32),
-        'c' => (full_base_count.f_c() as f32) / (full_base_count.c() as f32),
-        'g' => (full_base_count.f_g() as f32) / (full_base_count.g() as f32),
-        't' => (full_base_count.f_t() as f32) / (full_base_count.t() as f32),
-        _ => panic!("")
-    };
-    if minor_fr_ratio > params.minor_fr_ratio_range.0 && minor_fr_ratio < params.minor_fr_ratio_range.1 {
-        score.insert(SNVScore::PassedMinorFRRatio);
-    }
-
-    // If all passed then call
-    if score.is_all() {
-        return Some(SNVResult{
-            major_allele: AlleleCount::new(&params.major_allele, major_allele_count),
-            minor_allele: Some(AlleleCount::new(&params.minor_allele, minor_allele_count)),
-            cov: total,
-            fr_ratio,
-            minor_fr_ratio: minor_fr_ratio,
-            snv_score: score,
-            status: SiteStatus::SomaticMutation,
-        })
-    }
-
-    None
-}
 
 fn main() {
-    let pileup_db_path = Path::new("/Users/kent/Desktop/UPN59.pileup.sled");
-    let mpileup_path = Path::new("/Volumes/NVME4TB/local_data/yokoyama/UPN59.pileup.bq0.mq0.adjmq50.bgz");
+    let args: Vec<String> = env::args().collect();
+    let mpileup_path = Path::new(&args[1]);
+    let sample_list_path = &args[2];
+
+    // let pileup_db_path = Path::new("/Users/kent/Desktop/UPN39.pileup.sled");
+    // let mpileup_path = Path::new("/Volumes/NVME4TB/local_data/yokoyama/UPN39.pileup.bq0.mq0.adjmq50.bgz");
     let sample_list: Vec<&str> = vec![
-        "UPN59_B",
-        "UPN59_1_1",
-        "UPN59_1_3",
-        "UPN59_1_4",
-        "UPN59_1_5",
-        "UPN59_1_6",
-        "UPN59_1_7",
-        "UPN59_1_8",
-        "UPN59_1_9",
-        "UPN59_1_10",
-        "UPN59_1_11",
-        "UPN59_1_12",
-        "UPN59_1_13",
-        "UPN59_1_14",
-        "UPN59_1_15",
-        "UPN59_1_16",
-        "UPN59_1_17",
-        "UPN59_1_18",
-        "UPN59_1_19",
-        "UPN59_1_21",
-        "UPN59_1_22",
-        "UPN59_1_23",
-        "UPN59_1_24",
-        "UPN59_1_25",
+        // "UPN59_B",
+        // "UPN59_1_1",
+        // "UPN59_1_3",
+        // "UPN59_1_4",
+        // "UPN59_1_5",
+        // "UPN59_1_6",
+        // "UPN59_1_7",
+        // "UPN59_1_8",
+        // "UPN59_1_9",
+        // "UPN59_1_10",
+        // "UPN59_1_11",
+        // "UPN59_1_12",
+        // "UPN59_1_13",
+        // "UPN59_1_14",
+        // "UPN59_1_15",
+        // "UPN59_1_16",
+        // "UPN59_1_17",
+        // "UPN59_1_18",
+        // "UPN59_1_19",
+        // "UPN59_1_21",
+        // "UPN59_1_22",
+        // "UPN59_1_23",
+        // "UPN59_1_24",
+        // "UPN59_1_25",
+        "UPN39_B",
+        "UPN39_2_1",
+        "UPN39_2_2",
+        "UPN39_2_3",
+        "UPN39_2_4",
+        "UPN39_2_5",
+        "UPN39_2_6",
+        "UPN39_2_7",
+        "UPN39_2_8",
+        "UPN39_2_9",
+        "UPN39_2_10",
+        "UPN39_2_11",
+        "UPN39_2_12",
+        "UPN39_2_13",
+        "UPN39_2_14",
+        "UPN39_2_15",
+        "UPN39_2_16",
+        "UPN39_2_17",
+        "UPN39_2_18",
+        "UPN39_2_20",
+        "UPN39_2_21",
+        "UPN39_2_22",
+        "UPN39_2_23",
+        "UPN39_2_24",
+        "UPN39_2_25",
+        "UPN39_2_26",
+        "UPN39_2_27",
+        "UPN39_2_28",
+        "UPN39_2_29",
+        "UPN39_2_30",
+        "UPN39_2_31",
     ];
+    // TODO: read sample_list_path and parse line by line for sample names
+    // expectation is control name is first
+    let file = File::open(sample_list_path).unwrap();
+    let sample_list: Vec<&str> = io::BufReader::new(file).lines()
+        .filter_map(|l| if let Ok(line) = l { Some(line) } else { None })
+        .map(|line| {
+            line.split('.').collect::<Vec<&str>>()[0]
+        } )
+        .collect();
     let control_name: &str = sample_list[0];
 
     // Program settings
-    let NUM_THREADS = 4;
-    let FETCH_CHUNKSIZE: u64 = 1_000_000;
-    // Filtering parameters
-    let MIN_BQ = 20;
-    let MIN_MQ = 40;
-    let MIN_COV = 20;
-    let MAX_CONTROL_MINAC = 1;
-    let MIN_SAMPLE_AC = 3;
-    let (FR_RATIO_LB, FR_RATIO_UB) = (0.3, 0.7);
+    const NUM_THREADS: usize = 4;
+    const FETCH_CHUNKSIZE: u64 = 1_000_000;
 
     // Declare filters
     let control_filter_params = FilterParameters {
@@ -357,6 +176,13 @@ fn main() {
         min_minor_ac: 0,
         max_minor_ac: 1,
     };
+    let snv_params = SNVParameters {
+        min_maf: 0.01,
+        min_mac: 2,
+        max_oaf: 0.01,
+        max_oac: 1,
+        minor_fr_ratio_range: (0.3, 0.7),
+    };
 
     // DB configuration
     // Store pileups hierarchically
@@ -374,7 +200,7 @@ fn main() {
     // Open tabix-indexed bgzipped mpileup file
     let mut tbx_reader = tbx::Reader::from_path(&mpileup_path)
         .expect(&format!("Could not open {}", mpileup_path.display()));
-    tbx_reader.set_threads(NUM_THREADS);
+    tbx_reader.set_threads(NUM_THREADS).unwrap();
 
     // Resolve chromosome name to numeric ID.
     let target_chromosomes = vec![
@@ -437,52 +263,99 @@ fn main() {
             for record in tbx_reader.records() {
                 // Convert binary mpileup line and parse
                 let record_string = String::from_utf8(record.unwrap()).unwrap();
-                let mut multi_pileups = SpatialSitePileup::parse_mpileup_row(
-                    &record_string, &sample_list);
+                let mut spatial = SpatialSitePileup::parse_mpileup_row(&record_string, &sample_list, control_name);
 
                 // Process control pileup first
-                let control_pileup = multi_pileups.pileups.get_mut(control_name).unwrap();
-                let control_filter_result = filter_control(control_pileup, &control_filter_params);
-
-                // println!("{}\t{}\t{:?}", multi_pileups.chrom, multi_pileups.pos, control_filter_result.score);
-
+                // Continue only if control passed all filters
+                let control_filter_result = filter_control(&mut spatial.control_pileup, &control_filter_params);
                 if !control_filter_result.score.is_all() {
                     continue
                 }
-                // Set major allele from control
-                let major_allele = control_filter_result.alleles[0].base();
-
                 // Process non-control pileups at the same site
-                for (sample_name, pileup) in multi_pileups.pileups.iter_mut() {
-                    if sample_name == control_name { continue }
-                    quality_clean_pileup(pileup, &control_filter_params);
-                }
+                quality_clean_pileups(&mut spatial, &control_filter_params);
+    
                 // Determine region-wide major and minor allele
-                let minor_allele_call: MinorAlleleCall = call_regionwide_minor_allele(&mut multi_pileups, &sample_list, major_allele);
+                // Call SNV for each sample
+                let target_results = match check_snv_regionwide(&mut spatial, &control_filter_result, &target_filter_params, &snv_params) {
+                    Some(r) => r,
+                    None => continue,
+                };
 
-                for (sample_name, pileup) in multi_pileups.pileups.iter_mut() {
-                    if sample_name == control_name { continue }
-                    if let MinorAlleleCall::Some(b) = minor_allele_call {
-                        let target_score = filter_target(pileup, &target_filter_params);
-                        if target_score.is_all() {
-                            let snv_params = SNVParameters {
-                                major_allele: major_allele.to_owned(),
-                                minor_allele: b,
-                                min_maf: 0.01,
-                                min_mac: 1,
-                                max_oaf: 0.01,
-                                max_oac: 1,
-                                minor_fr_ratio_range: (0.3, 0.7),
-                            };                        
-                            if let Some(result) = call_target_snv(pileup, &snv_params) {
-                                // println!("\t{:?}", result)
-                                println!("{}:{}\t{}\t{:?}", 
-                                    multi_pileups.chrom, multi_pileups.pos,
-                                    sample_name, result)
-                            }
-                        }
-                    }
-                }
+                // print results
+                let site_info = format!(
+                    "{chrom}\t{pos}\t{ref_char}\t{major_char}\t{minor_char}",
+                    chrom=spatial.chrom, 
+                    pos=spatial.pos,
+                    ref_char=spatial.ref_char,
+                    major_char=control_filter_result.naive_major_allele(),
+                    minor_char=target_results.minor_allele(),
+                );
+                let site_info_numcols = 5;
+
+                let control_info = format!(
+                    "{ctrl_filt_bitscore}\t{ctrl_fr_ratio:.6}\t{f_a}:{r_a}:{f_c}:{r_c}:{f_g}:{r_g}:{f_t}:{r_t}",
+                    ctrl_filt_bitscore=control_filter_result.score.to_bits(), 
+                    ctrl_fr_ratio=control_filter_result.fr_ratio,
+                    f_a=control_filter_result.full_base_count.f_a(),
+                    r_a=control_filter_result.full_base_count.r_a(),
+                    f_c=control_filter_result.full_base_count.f_c(),
+                    r_c=control_filter_result.full_base_count.r_c(),
+                    f_g=control_filter_result.full_base_count.f_g(),
+                    r_g=control_filter_result.full_base_count.r_g(),
+                    f_t=control_filter_result.full_base_count.f_t(),
+                    r_t=control_filter_result.full_base_count.r_t(),
+                );
+                let control_info_numcols = 3;
+
+                let pooled_info = format!(
+                    "{pooled_fr_ratio:.6}\t{pooled_major_fr_ratio:.6}\t{pooled_minor_fr_ratio:.6}\t{f_a}:{r_a}:{f_c}:{r_c}:{f_g}:{r_g}:{f_t}:{r_t}\t{pooled_bias_pval:.6}",
+                    pooled_fr_ratio=target_results.pooled_fr_ratio(), 
+                    pooled_major_fr_ratio=target_results.pooled_major_fr_ratio(),
+                    pooled_minor_fr_ratio=target_results.pooled_minor_fr_ratio(),
+                    f_a=target_results.pooled_full_base_count().f_a(),
+                    r_a=target_results.pooled_full_base_count().r_a(),
+                    f_c=target_results.pooled_full_base_count().f_c(),
+                    r_c=target_results.pooled_full_base_count().r_c(),
+                    f_g=target_results.pooled_full_base_count().f_g(),
+                    r_g=target_results.pooled_full_base_count().r_g(),
+                    f_t=target_results.pooled_full_base_count().f_t(),
+                    r_t=target_results.pooled_full_base_count().r_t(),
+                    pooled_bias_pval=target_results.pooled_bias_pval(),
+                );
+                let pooled_info_numcols = 5;
+
+                let sample_section: String = target_results.sample_results.iter()
+                    .map(|result| {
+                        format!(
+                            "{sample_name}\t{filt_bitscore}\t{snv_bitscore}\t{fr_ratio:.6}\t{major_fr_ratio:.6}\t{minor_fr_ratio:.6}\t{f_a}:{r_a}:{f_c}:{r_c}:{f_g}:{r_g}:{f_t}:{r_t}\t{bias_pval:.6}",
+                            sample_name=result.sample_name,
+                            filt_bitscore=result.filt_bitscore.to_bits(),
+                            snv_bitscore=result.snv_bitscore.to_bits(),
+                            fr_ratio=result.fr_ratio,
+                            major_fr_ratio=result.major_fr_ratio,
+                            minor_fr_ratio=result.minor_fr_ratio,
+                            f_a=result.full_base_count.f_a(),
+                            r_a=result.full_base_count.r_a(),
+                            f_c=result.full_base_count.f_c(),
+                            r_c=result.full_base_count.r_c(),
+                            f_g=result.full_base_count.f_g(),
+                            r_g=result.full_base_count.r_g(),
+                            f_t=result.full_base_count.f_t(),
+                            r_t=result.full_base_count.r_t(),
+                            bias_pval=result.bias_pval,
+                        )
+                    }).collect::<Vec<String>>().join("\t");
+                let pooled_info_numcols = 8;
+
+                let passed_samples_bitstring = target_results.passed_samples_bitstring(TargetFilterScore::all(), SNVScore::all());
+                println!(
+                    "{}\t{}\t{}\t{}\t{}",
+                    site_info,
+                    passed_samples_bitstring,
+                    control_info,
+                    pooled_info,
+                    sample_section,
+                );
             }
         }
     }
