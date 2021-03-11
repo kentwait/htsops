@@ -83,7 +83,7 @@ fn main() {
 
     // let pileup_db_path = Path::new("/Users/kent/Desktop/UPN39.pileup.sled");
     // let mpileup_path = Path::new("/Volumes/NVME4TB/local_data/yokoyama/UPN39.pileup.bq0.mq0.adjmq50.bgz");
-    let sample_list: Vec<&str> = vec![
+    // let sample_list: Vec<&str> = vec![
         // "UPN59_B",
         // "UPN59_1_1",
         // "UPN59_1_3",
@@ -108,45 +108,49 @@ fn main() {
         // "UPN59_1_23",
         // "UPN59_1_24",
         // "UPN59_1_25",
-        "UPN39_B",
-        "UPN39_2_1",
-        "UPN39_2_2",
-        "UPN39_2_3",
-        "UPN39_2_4",
-        "UPN39_2_5",
-        "UPN39_2_6",
-        "UPN39_2_7",
-        "UPN39_2_8",
-        "UPN39_2_9",
-        "UPN39_2_10",
-        "UPN39_2_11",
-        "UPN39_2_12",
-        "UPN39_2_13",
-        "UPN39_2_14",
-        "UPN39_2_15",
-        "UPN39_2_16",
-        "UPN39_2_17",
-        "UPN39_2_18",
-        "UPN39_2_20",
-        "UPN39_2_21",
-        "UPN39_2_22",
-        "UPN39_2_23",
-        "UPN39_2_24",
-        "UPN39_2_25",
-        "UPN39_2_26",
-        "UPN39_2_27",
-        "UPN39_2_28",
-        "UPN39_2_29",
-        "UPN39_2_30",
-        "UPN39_2_31",
-    ];
+    //     "UPN39_B",
+    //     "UPN39_2_1",
+    //     "UPN39_2_2",
+    //     "UPN39_2_3",
+    //     "UPN39_2_4",
+    //     "UPN39_2_5",
+    //     "UPN39_2_6",
+    //     "UPN39_2_7",
+    //     "UPN39_2_8",
+    //     "UPN39_2_9",
+    //     "UPN39_2_10",
+    //     "UPN39_2_11",
+    //     "UPN39_2_12",
+    //     "UPN39_2_13",
+    //     "UPN39_2_14",
+    //     "UPN39_2_15",
+    //     "UPN39_2_16",
+    //     "UPN39_2_17",
+    //     "UPN39_2_18",
+    //     "UPN39_2_20",
+    //     "UPN39_2_21",
+    //     "UPN39_2_22",
+    //     "UPN39_2_23",
+    //     "UPN39_2_24",
+    //     "UPN39_2_25",
+    //     "UPN39_2_26",
+    //     "UPN39_2_27",
+    //     "UPN39_2_28",
+    //     "UPN39_2_29",
+    //     "UPN39_2_30",
+    //     "UPN39_2_31",
+    // ];
     // TODO: read sample_list_path and parse line by line for sample names
     // expectation is control name is first
     let file = File::open(sample_list_path).unwrap();
     let sample_list: Vec<&str> = io::BufReader::new(file).lines()
         .filter_map(|l| if let Ok(line) = l { Some(line) } else { None })
         .map(|line| {
-            line.split('.').collect::<Vec<&str>>()[0]
+            // TODO: Change to more robust solution for paths
+            let split: Vec<&str> = line.split('/').collect();
+            let filename = split[split.len() - 1];
+            let sample_name = filename.split('.').collect::<Vec<&str>>()[0];
+            sample_name
         } )
         .collect();
     let control_name: &str = sample_list[0];
