@@ -1,12 +1,106 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use bitflags::bitflags;
 use fishers_exact::fishers_exact;
 
 use crate::pileup::{SitePileup, SpatialSitePileup};
-use crate::pileup::{BaseCount, FullBaseCount, AlleleCount, AlleleFreq, AlleleSet};
+use crate::pileup::{FullBaseCount, AlleleCount, AlleleSet};
 use crate::filter::{FilterParameters, ControlFilterScore, TargetFilterScore, ControlFilterResult, TargetFilterResult};
-use crate::filter::{SNVParameters, SNVScore, SiteStatus, SNVResult};
+use crate::filter::{SNVParameters, SNVScore};
+
+
+#[derive(Debug)]
+pub struct PooledSNVResult {
+    pub minor_allele: char,
+    pub fr_ratio: f32,
+    pub major_fr_ratio: f32,
+    pub minor_fr_ratio: f32,
+    pub full_base_count: FullBaseCount,
+    pub bias_pval: f64,
+}
+impl fmt::Display for PooledSNVResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f, 
+            "{pooled_fr_ratio:.6}\t{pooled_major_fr_ratio:.6}\t{pooled_minor_fr_ratio:.6}\t{f_a}:{r_a}:{f_c}:{r_c}:{f_g}:{r_g}:{f_t}:{r_t}\t{pooled_bias_pval:.6}",
+            pooled_fr_ratio=self.fr_ratio, 
+            pooled_major_fr_ratio=self.major_fr_ratio,
+            pooled_minor_fr_ratio=self.minor_fr_ratio,
+            f_a=self.full_base_count.f_a(),
+            r_a=self.full_base_count.r_a(),
+            f_c=self.full_base_count.f_c(),
+            r_c=self.full_base_count.r_c(),
+            f_g=self.full_base_count.f_g(),
+            r_g=self.full_base_count.r_g(),
+            f_t=self.full_base_count.f_t(),
+            r_t=self.full_base_count.r_t(),
+            pooled_bias_pval=self.bias_pval,
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct SampleSNVResult {
+    pub sample_name: String,
+    pub filt_bitscore: TargetFilterScore,
+    pub snv_bitscore: SNVScore,
+    pub fr_ratio: f32,
+    pub major_fr_ratio: f32,
+    pub minor_fr_ratio: f32,
+    pub full_base_count: FullBaseCount,
+    pub bias_pval: f64,
+}
+impl fmt::Display for SampleSNVResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f, 
+            "{sample_name}\t{filt_bitscore}\t{snv_bitscore}\t{fr_ratio:.6}\t{major_fr_ratio:.6}\t{minor_fr_ratio:.6}\t{f_a}:{r_a}:{f_c}:{r_c}:{f_g}:{r_g}:{f_t}:{r_t}\t{bias_pval:.6}",
+            sample_name=self.sample_name,
+            filt_bitscore=self.filt_bitscore.to_bits(),
+            snv_bitscore=self.snv_bitscore.to_bits(),
+            fr_ratio=self.fr_ratio,
+            major_fr_ratio=self.major_fr_ratio,
+            minor_fr_ratio=self.minor_fr_ratio,
+            f_a=self.full_base_count.f_a(),
+            r_a=self.full_base_count.r_a(),
+            f_c=self.full_base_count.f_c(),
+            r_c=self.full_base_count.r_c(),
+            f_g=self.full_base_count.f_g(),
+            r_g=self.full_base_count.r_g(),
+            f_t=self.full_base_count.f_t(),
+            r_t=self.full_base_count.r_t(),
+            bias_pval=self.bias_pval,
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct RegionwideSNVResult {
+    pub pooled_result: PooledSNVResult,
+    pub sample_results: Vec<SampleSNVResult>,
+}
+impl RegionwideSNVResult {
+    pub fn minor_allele(&self) -> &char { &self.pooled_result.minor_allele }
+    pub fn pooled_fr_ratio(&self) -> f32 { self.pooled_result.fr_ratio }
+    pub fn pooled_major_fr_ratio(&self) -> f32 { self.pooled_result.major_fr_ratio }
+    pub fn pooled_minor_fr_ratio(&self) -> f32 { self.pooled_result.minor_fr_ratio }
+    pub fn pooled_full_base_count(&self) -> &FullBaseCount { &self.pooled_result.full_base_count }
+    pub fn pooled_bias_pval(&self) -> f64 { self.pooled_result.bias_pval }
+
+    pub fn passed_samples_bitstring(&self, filt_flags: TargetFilterScore, snv_flags: SNVScore) -> String {
+        self.sample_results.iter()
+            .map(|result| {
+                let filt_result = result.filt_bitscore.contains(filt_flags);
+                let snv_result = result.snv_bitscore.contains(snv_flags);
+                match filt_result & snv_result {
+                    true => '1',
+                    false => '0',
+                }
+            })
+            .collect::<String>()
+    }
+}
 
 pub fn filter_control(pileup: &mut SitePileup, params: &FilterParameters) -> ControlFilterResult {
     let mut score: ControlFilterScore = Default::default();
@@ -281,50 +375,4 @@ pub fn check_snv_regionwide(regionwide_pileups: &mut SpatialSitePileup, control_
         sample_results.push(snv_result);
     }
     Some(RegionwideSNVResult{ pooled_result, sample_results })
-}
-
-pub struct PooledSNVResult {
-    pub minor_allele: char,
-    pub fr_ratio: f32,
-    pub major_fr_ratio: f32,
-    pub minor_fr_ratio: f32,
-    pub full_base_count: FullBaseCount,
-    pub bias_pval: f64,
-}
-
-pub struct SampleSNVResult {
-    pub sample_name: String,
-    pub filt_bitscore: TargetFilterScore,
-    pub snv_bitscore: SNVScore,
-    pub fr_ratio: f32,
-    pub major_fr_ratio: f32,
-    pub minor_fr_ratio: f32,
-    pub full_base_count: FullBaseCount,
-    pub bias_pval: f64,
-}
-
-pub struct RegionwideSNVResult {
-    pub pooled_result: PooledSNVResult,
-    pub sample_results: Vec<SampleSNVResult>,
-}
-impl RegionwideSNVResult {
-    pub fn minor_allele(&self) -> &char { &self.pooled_result.minor_allele }
-    pub fn pooled_fr_ratio(&self) -> f32 { self.pooled_result.fr_ratio }
-    pub fn pooled_major_fr_ratio(&self) -> f32 { self.pooled_result.major_fr_ratio }
-    pub fn pooled_minor_fr_ratio(&self) -> f32 { self.pooled_result.minor_fr_ratio }
-    pub fn pooled_full_base_count(&self) -> &FullBaseCount { &self.pooled_result.full_base_count }
-    pub fn pooled_bias_pval(&self) -> f64 { self.pooled_result.bias_pval }
-
-    pub fn passed_samples_bitstring(&self, filt_flags: TargetFilterScore, snv_flags: SNVScore) -> String {
-        self.sample_results.iter()
-            .map(|result| {
-                let filt_result = result.filt_bitscore.contains(filt_flags);
-                let snv_result = result.snv_bitscore.contains(snv_flags);
-                match filt_result & snv_result {
-                    true => '1',
-                    false => '0',
-                }
-            })
-            .collect::<String>()
-    }
 }

@@ -493,10 +493,15 @@ impl SitePileup {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SpatialSitePileup {
+    // Chromosome name such as "chr1" in hg19
     pub chrom: String, 
+    // Chromosome position (1-based?)
     pub pos: u64, 
+    // Reference character in hg19
     pub ref_char: char,
+    // Control SitePileup 
     pub control_pileup: SitePileup,
+    // Vector of target SitePileups
     pub pileups: Vec<SitePileup>,
 }
 

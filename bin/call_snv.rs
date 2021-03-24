@@ -81,78 +81,18 @@ fn main() {
     let mpileup_path = Path::new(&args[1]);
     let sample_list_path = &args[2];
 
-    // let pileup_db_path = Path::new("/Users/kent/Desktop/UPN39.pileup.sled");
-    // let mpileup_path = Path::new("/Volumes/NVME4TB/local_data/yokoyama/UPN39.pileup.bq0.mq0.adjmq50.bgz");
-    // let sample_list: Vec<&str> = vec![
-        // "UPN59_B",
-        // "UPN59_1_1",
-        // "UPN59_1_3",
-        // "UPN59_1_4",
-        // "UPN59_1_5",
-        // "UPN59_1_6",
-        // "UPN59_1_7",
-        // "UPN59_1_8",
-        // "UPN59_1_9",
-        // "UPN59_1_10",
-        // "UPN59_1_11",
-        // "UPN59_1_12",
-        // "UPN59_1_13",
-        // "UPN59_1_14",
-        // "UPN59_1_15",
-        // "UPN59_1_16",
-        // "UPN59_1_17",
-        // "UPN59_1_18",
-        // "UPN59_1_19",
-        // "UPN59_1_21",
-        // "UPN59_1_22",
-        // "UPN59_1_23",
-        // "UPN59_1_24",
-        // "UPN59_1_25",
-    //     "UPN39_B",
-    //     "UPN39_2_1",
-    //     "UPN39_2_2",
-    //     "UPN39_2_3",
-    //     "UPN39_2_4",
-    //     "UPN39_2_5",
-    //     "UPN39_2_6",
-    //     "UPN39_2_7",
-    //     "UPN39_2_8",
-    //     "UPN39_2_9",
-    //     "UPN39_2_10",
-    //     "UPN39_2_11",
-    //     "UPN39_2_12",
-    //     "UPN39_2_13",
-    //     "UPN39_2_14",
-    //     "UPN39_2_15",
-    //     "UPN39_2_16",
-    //     "UPN39_2_17",
-    //     "UPN39_2_18",
-    //     "UPN39_2_20",
-    //     "UPN39_2_21",
-    //     "UPN39_2_22",
-    //     "UPN39_2_23",
-    //     "UPN39_2_24",
-    //     "UPN39_2_25",
-    //     "UPN39_2_26",
-    //     "UPN39_2_27",
-    //     "UPN39_2_28",
-    //     "UPN39_2_29",
-    //     "UPN39_2_30",
-    //     "UPN39_2_31",
-    // ];
-    // TODO: read sample_list_path and parse line by line for sample names
-    // expectation is control name is first
     let file = File::open(sample_list_path).unwrap();
-    let sample_list: Vec<&str> = io::BufReader::new(file).lines()
+    let sample_list: Vec<String> = io::BufReader::new(file).lines()
         .filter_map(|l| if let Ok(line) = l { Some(line) } else { None })
         .map(|line| {
             // TODO: Change to more robust solution for paths
             let split: Vec<&str> = line.split('/').collect();
             let filename = split[split.len() - 1];
             let sample_name = filename.split('.').collect::<Vec<&str>>()[0];
-            sample_name
-        } )
+            sample_name.to_owned()
+        })
         .collect();
+    let sample_list: Vec<&str> = sample_list.iter().map(|s| &**s).collect();
     let control_name: &str = sample_list[0];
 
     // Program settings
@@ -256,6 +196,8 @@ fn main() {
 
     // FIRST PASS
     // Read through all records in all chromosomes
+    // Record per chromosome coverage min, max, average for each sample
+    // Record 
     // Compute statistics:
     // - cov
     // - fr ratio
@@ -311,44 +253,13 @@ fn main() {
                 );
                 let control_info_numcols = 3;
 
-                let pooled_info = format!(
-                    "{pooled_fr_ratio:.6}\t{pooled_major_fr_ratio:.6}\t{pooled_minor_fr_ratio:.6}\t{f_a}:{r_a}:{f_c}:{r_c}:{f_g}:{r_g}:{f_t}:{r_t}\t{pooled_bias_pval:.6}",
-                    pooled_fr_ratio=target_results.pooled_fr_ratio(), 
-                    pooled_major_fr_ratio=target_results.pooled_major_fr_ratio(),
-                    pooled_minor_fr_ratio=target_results.pooled_minor_fr_ratio(),
-                    f_a=target_results.pooled_full_base_count().f_a(),
-                    r_a=target_results.pooled_full_base_count().r_a(),
-                    f_c=target_results.pooled_full_base_count().f_c(),
-                    r_c=target_results.pooled_full_base_count().r_c(),
-                    f_g=target_results.pooled_full_base_count().f_g(),
-                    r_g=target_results.pooled_full_base_count().r_g(),
-                    f_t=target_results.pooled_full_base_count().f_t(),
-                    r_t=target_results.pooled_full_base_count().r_t(),
-                    pooled_bias_pval=target_results.pooled_bias_pval(),
-                );
+                let pooled_info = format!("{}", target_results.pooled_result);
                 let pooled_info_numcols = 5;
 
                 let sample_section: String = target_results.sample_results.iter()
-                    .map(|result| {
-                        format!(
-                            "{sample_name}\t{filt_bitscore}\t{snv_bitscore}\t{fr_ratio:.6}\t{major_fr_ratio:.6}\t{minor_fr_ratio:.6}\t{f_a}:{r_a}:{f_c}:{r_c}:{f_g}:{r_g}:{f_t}:{r_t}\t{bias_pval:.6}",
-                            sample_name=result.sample_name,
-                            filt_bitscore=result.filt_bitscore.to_bits(),
-                            snv_bitscore=result.snv_bitscore.to_bits(),
-                            fr_ratio=result.fr_ratio,
-                            major_fr_ratio=result.major_fr_ratio,
-                            minor_fr_ratio=result.minor_fr_ratio,
-                            f_a=result.full_base_count.f_a(),
-                            r_a=result.full_base_count.r_a(),
-                            f_c=result.full_base_count.f_c(),
-                            r_c=result.full_base_count.r_c(),
-                            f_g=result.full_base_count.f_g(),
-                            r_g=result.full_base_count.r_g(),
-                            f_t=result.full_base_count.f_t(),
-                            r_t=result.full_base_count.r_t(),
-                            bias_pval=result.bias_pval,
-                        )
-                    }).collect::<Vec<String>>().join("\t");
+                    .map(|result| format!("{}", result))
+                    .collect::<Vec<String>>()
+                    .join("\t");
                 let pooled_info_numcols = 8;
 
                 let passed_samples_bitstring = target_results.passed_samples_bitstring(TargetFilterScore::all(), SNVScore::all());
@@ -362,5 +273,10 @@ fn main() {
                 );
             }
         }
+    }
+
+    // SECOND PASS
+    for chrom in target_chromosomes.iter() {
+        
     }
 }
