@@ -34,6 +34,10 @@ name = "multi_mpileup"
 path = "bin/multi_mpileup.rs"
 
 [[bin]]
+name = "spatial_pileup"
+path = "bin/spatial_pileup.rs"
+
+[[bin]]
 name = "estimate"
 path = "bin/estimate.rs"
 
