@@ -6,6 +6,7 @@
 pub mod pileup;
 pub mod filter;
 pub mod caller;
+pub mod util;
 
 // #[pyfunction]
 // fn parse_pileup_record(record: &str) -> PyResult<String> {
