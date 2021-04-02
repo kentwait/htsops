@@ -120,7 +120,7 @@ pub fn filter_control(pileup: &mut SitePileup, params: &FilterParameters) -> Con
     // Check if site in control has a variant
     // Currently works only for homozygous sites
     let full_base_count = pileup.full_base_count();
-    let allele_set = AlleleSet::from_basecount(full_base_count.to_basecount());
+    let allele_set = AlleleSet::from_basecount(&full_base_count.to_basecount());
     let total_count = allele_set.total_count() as f32;
     match allele_set.len() {
         // 0 => panic!("No alleles present. Possibly empty pileup?"),
@@ -172,7 +172,7 @@ pub fn call_regionwide_minor_allele(multi_pileup: &mut SpatialSitePileup, major_
     // Determine region-wide major and minor allele
     // Major is based on control allele, 
     // Must also be the top in the pooled
-    let allele_set: AlleleSet = AlleleSet::from_basecount(full_base_count.to_basecount());
+    let allele_set: AlleleSet = AlleleSet::from_basecount(&full_base_count.to_basecount());
     let total = allele_set.total_count();
     if allele_set.len() == 0 {
         panic!("No alleles present. Possibly empty pileup?")
@@ -263,7 +263,7 @@ pub fn check_sample_snv(pileup: &mut SitePileup, major_allele: &char, minor_alle
     }
     // Call if variant site or not
     let full_base_count = pileup.full_base_count();
-    let allele_set = AlleleSet::from_basecount(full_base_count.to_basecount());
+    let allele_set = AlleleSet::from_basecount(&full_base_count.to_basecount());
     let total_count = allele_set.total_count() as f32;
     match allele_set.len() {
         0 => (),
