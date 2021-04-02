@@ -13,6 +13,9 @@
 // --min-target-bq   : Minimum base quality to consider for each sample
 // --min-target-mq   : Minimum mapping quality to consider for each sample
 // --threads         : Number of threads to use
+use std::collections::VecDeque;
+use std::thread;
+use std::sync::mpsc;
 
 use clap::{Arg, App};
 
@@ -32,7 +35,6 @@ fn main() {
             .help("Number of threads to use")
             .takes_value(true))
         .arg(Arg::with_name("min_control_cov")
-            .short("cc")
             .long("min-control-cov")
             .default_value("20")
             .value_name("INT")
@@ -40,7 +42,6 @@ fn main() {
             .takes_value(true)
             .validator(validate_qual))
         .arg(Arg::with_name("min_control_bq")
-            .short("cb")
             .long("min-control-bq")
             .default_value("20")
             .value_name("INT")
@@ -48,7 +49,6 @@ fn main() {
             .takes_value(true)
             .validator(validate_qual))
         .arg(Arg::with_name("min_control_mq")
-            .short("cm")
             .long("min-control-mq")
             .default_value("40")
             .value_name("INT")
@@ -56,7 +56,6 @@ fn main() {
             .takes_value(true)
             .validator(validate_qual))
         .arg(Arg::with_name("min_target_cov")
-            .short("tc")
             .long("min-target-cov")
             .default_value("20")
             .value_name("INT")
@@ -64,7 +63,6 @@ fn main() {
             .takes_value(true)
             .validator(validate_qual))
         .arg(Arg::with_name("min_target_bq")
-            .short("tb")
             .long("min-target-bq")
             .default_value("20")
             .value_name("INT")
@@ -72,7 +70,6 @@ fn main() {
             .takes_value(true)
             .validator(validate_qual))
         .arg(Arg::with_name("min_target_mq")
-            .short("tm")
             .long("min-target-mq")
             .default_value("40")
             .value_name("INT")
@@ -81,7 +78,7 @@ fn main() {
             .validator(validate_qual))
         .arg(Arg::with_name("PILEUP_LIST")
             .help("Contains list of pileup files to process")
-            .required(true)
+            // .required(true)
             .index(1)
             .validator(validate_path))
         .get_matches();
@@ -89,14 +86,28 @@ fn main() {
     let min_control_bq: u8 = matches.value_of("min_control_bq").unwrap().parse::<u8>().unwrap();
     let min_control_mq: u8 = matches.value_of("min_control_mq").unwrap().parse::<u8>().unwrap();
     let threads: usize = matches.value_of("threads").unwrap().parse::<usize>().unwrap();
-    let pileup_path_file = matches.value_of("PILEUP_LIST").unwrap();
-    let pileup_paths: Vec<String> = filelist_to_vec(pileup_path_file);
+    // let pileup_path_file = matches.value_of("PILEUP_LIST").unwrap();
+    // let pileup_path_list: VecDeque<String> = filelist_to_vec(pileup_path_file).into_iter().collect();
 
     // Read all the mpileups and get the sites which is found in all
+    // Saturate processing from queue based on the number of threads
+    let (tx, rx) = mpsc::channel();
+
+    for i in 0..threads {
+        let ttx = tx.clone();
+        thread::spawn(move || {
+            ttx.send(i).unwrap();
+        });
+    }
+    // Close send to finish
+    drop(tx);
+
+    for received in rx {
+        println!("Got: {}", received);
+    }
 
     // Visit each site
     // Evaluate control first. Do bq and mq filtering and test coverage
     // Evaluate samples. Do bq and mq for each sample and test coverage for each as well
     // If passed control and passed ALL samples, then include in the output
-
 }
