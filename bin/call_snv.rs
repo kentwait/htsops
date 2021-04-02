@@ -13,6 +13,7 @@ use htsops::pileup::SpatialSitePileup;
 // # Pass 1 columns
 // chr
 // pos
+// ref_char
 // major_char
 // minor_char
 // control_filt_bitscore
