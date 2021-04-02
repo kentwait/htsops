@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
 use std::ops::Add;
-
+use std::fmt;
 
 #[derive(Debug)]
 pub struct FullBaseCount((usize, usize), (usize, usize), (usize, usize), (usize, usize));
@@ -15,7 +15,19 @@ impl FullBaseCount {
     pub fn r_g(&self) -> usize { self.2.1 }
     pub fn f_t(&self) -> usize { self.3.0 }
     pub fn r_t(&self) -> usize { self.3.1 }
-
+    pub fn full_count_of(&self, b: &char) -> usize {
+        match b {
+            'A' => self.f_a(),
+            'C' => self.f_c(),
+            'G' => self.f_g(),
+            'T' => self.f_t(),
+            'a' => self.r_a(),
+            'c' => self.r_c(),
+            'g' => self.r_g(),
+            't' => self.r_t(),
+            _ => 0,
+        }
+    }
     pub fn forward(&self) -> usize {
         self.0.0 + self.1.0 + self.2.0 + self.3.0 
     }
@@ -58,6 +70,15 @@ impl FullBaseCount {
     pub fn c(&self) -> usize { self.1.0 + self.1.1 }
     pub fn g(&self) -> usize { self.2.0 + self.2.1 }
     pub fn t(&self) -> usize { self.3.0 + self.3.1 }
+    pub fn count_of(&self, b: &char) -> usize {
+        match b {
+            'a' => self.a(),
+            'c' => self.c(),
+            'g' => self.g(),
+            't' => self.t(),
+            _ => 0,
+        }
+    }
 
     pub fn total(&self) -> usize {
         self.forward() + self.reverse()
@@ -107,7 +128,16 @@ impl Add<&FullBaseCount> for &FullBaseCount {
         )
     }
 }
-
+impl fmt::Display for FullBaseCount {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}:{}:{}:{}:{}:{}:{}", 
+            self.0.0, self.0.1, 
+            self.1.0, self.1.1,
+            self.2.0, self.2.1,
+            self.3.0, self.3.1,
+        )
+    }
+}
 
 #[derive(Debug)]
 pub struct BaseCount(usize, usize, usize, usize);
@@ -155,6 +185,11 @@ impl Add for BaseCount {
         )
     }
 }
+impl fmt::Display for BaseCount {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}:{}:{}:{}", self.0, self.1, self.2, self.3)
+    }
+}
 
 #[derive(Debug)]
 pub struct AlleleCount(char, usize);
@@ -197,7 +232,25 @@ impl AlleleSet {
             sorted: false,
         }
     }
-    pub fn from_basecount(base_count: BaseCount) -> Self {
+
+    pub fn from_fullbasecount(base_count: &FullBaseCount) -> Self {
+        let alleles: Vec<AlleleCount> = vec![
+                ('a', base_count.a()),
+                ('c', base_count.c()),
+                ('g', base_count.g()),
+                ('t', base_count.t()),
+            ]
+            .into_iter()
+            .filter_map(|(k, v)| match v {
+                0 => None,
+                _ => Some(AlleleCount(k, v))
+            }).collect();
+        let mut allele_set = AlleleSet::new(alleles);
+        allele_set.sort();
+        allele_set
+    }
+
+    pub fn from_basecount(base_count: &BaseCount) -> Self {
         let alleles: Vec<AlleleCount> = vec![
                 ('a', base_count.a()),
                 ('c', base_count.c()),
