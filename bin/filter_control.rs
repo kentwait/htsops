@@ -132,9 +132,25 @@ fn hist_to_file(per_chrom_hist: &IndexMap<&str, BTreeMap<usize, usize>>, per_chr
             hist.iter().map(|(_,c)| c ).sum::<usize>()
         })
         .sum::<usize>();
-    // Print stats
-    f.write_fmt(format_args!("# Total sites: {}\n", total_sites)).expect("Unable to write data");
-    f.write_fmt(format_args!("# Total counted: {}\n", total_counted)).expect("Unable to write data");
+    // Overall
+    let mut all_hist: BTreeMap<usize, usize> = BTreeMap::new();
+    for (_, hist) in per_chrom_hist.iter() {
+        for (&val, &count) in hist.iter() {
+            *all_hist.entry(val).or_insert(0) += count;
+        }
+    }
+    // Print overall stats
+    f.write_fmt(format_args!("# Overall histogram\n")).expect("Unable to write data");
+    f.write_fmt(format_args!("# total_sites:{}\n", total_sites)).expect("Unable to write data");
+    f.write_fmt(format_args!("# total_counted:{}\n", total_counted)).expect("Unable to write data");
+    let mean: f64 = hist_mean(&all_hist, total_counted);
+    let median: f64 = hist_median(&all_hist, total_counted);
+    f.write_fmt(format_args!("# mean:{mean:.6}\tmedian:{median:.6}\n", mean=mean, median=median)).expect("Unable to write data");
+    for (val, count) in all_hist.iter() {
+        let freq: f64 = (*count as f64) / (total_counted as f64);
+        f.write_fmt(format_args!("\t{:.4}:\t{:>7}\t{:.6}\n", val, count, freq)).expect("Unable to write data");
+    }        
+    f.flush().expect("Unable to flush data");
     // Print coverage histogram
     f.write_fmt(format_args!("# Per-chromosome histogram\n")).expect("Unable to write data");
     for (&chrom, hist) in per_chrom_hist.iter() {
@@ -142,13 +158,13 @@ fn hist_to_file(per_chrom_hist: &IndexMap<&str, BTreeMap<usize, usize>>, per_chr
         // calculate mean
         let this_chrom_total: usize = per_chrom_total.get(chrom).unwrap().to_owned();
         let this_chrom_counted: usize = per_chrom_hist.get(chrom).unwrap().iter().map(|(_,c)| c ).sum::<usize>();
-        let mean: f64 = hist_mean(&hist, this_chrom_total);
-        let median: f64 = hist_median(&hist, this_chrom_total);
-        f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tcounted:{:>8}\t{mean}\t{median}\n", 
+        let mean: f64 = hist_mean(&hist, this_chrom_counted);
+        let median: f64 = hist_median(&hist, this_chrom_counted);
+        f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tcounted:{:>8}\tmean:{mean:.6}\tmedian:{median:.6}\n", 
             chrom, this_chrom_total, this_chrom_counted,
             mean=mean, median=median)).expect("Unable to write data");
         for (val, count) in hist.iter() {
-            let freq: f64 = (*count as f64) / (total_counted as f64);
+            let freq: f64 = (*count as f64) / (this_chrom_counted as f64);
             f.write_fmt(format_args!("\t{:>5}:\t{:>7}\t{:.6}\n", val, count, freq)).expect("Unable to write data");
         }        
     }
@@ -162,9 +178,26 @@ fn fhist_to_file(per_chrom_hist: &IndexMap<&str, BTreeMap<usize, usize>>, per_ch
             hist.iter().map(|(_,c)| c ).sum::<usize>()
         })
         .sum::<usize>();
-    // Print stats
-    f.write_fmt(format_args!("# Total sites: {}\n", total_sites)).expect("Unable to write data");
-    f.write_fmt(format_args!("# Total counted: {}\n", total_counted)).expect("Unable to write data");
+    // Overall
+    let mut all_hist: BTreeMap<usize, usize> = BTreeMap::new();
+    for (_, hist) in per_chrom_hist.iter() {
+        for (&val, &count) in hist.iter() {
+            *all_hist.entry(val).or_insert(0) += count;
+        }
+    }
+    // Print overall stats
+    f.write_fmt(format_args!("# Overall histogram\n")).expect("Unable to write data");
+    f.write_fmt(format_args!("# total_sites:{}\n", total_sites)).expect("Unable to write data");
+    f.write_fmt(format_args!("# total_counted:{}\n", total_counted)).expect("Unable to write data");
+    let mean: f64 = hist_mean(&all_hist, total_counted) / divisor;
+    let median: f64 = hist_median(&all_hist, total_counted) / divisor;
+    f.write_fmt(format_args!("# mean:{mean:.6}\tmedian:{median:.6}\n", mean=mean, median=median)).expect("Unable to write data");
+    for (val, count) in all_hist.iter() {
+        let val: f64 = (*val as f64) / divisor;
+        let freq: f64 = (*count as f64) / (total_counted as f64);
+        f.write_fmt(format_args!("\t{:.4}:\t{:>7}\t{:.6}\n", val, count, freq)).expect("Unable to write data");
+    }        
+    f.flush().expect("Unable to flush data");
     // Print coverage histogram
     f.write_fmt(format_args!("# Per-chromosome histogram\n")).expect("Unable to write data");
     for (&chrom, hist) in per_chrom_hist.iter() {
@@ -172,16 +205,24 @@ fn fhist_to_file(per_chrom_hist: &IndexMap<&str, BTreeMap<usize, usize>>, per_ch
         // calculate mean
         let this_chrom_total: usize = per_chrom_total.get(chrom).unwrap().to_owned();
         let this_chrom_counted: usize = per_chrom_hist.get(chrom).unwrap().iter().map(|(_,c)| c ).sum::<usize>();
-        let mean: f64 = hist_mean(&hist, this_chrom_total) / divisor;
-        let median: f64 = hist_median(&hist, this_chrom_total) / divisor;
-        f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tcounted:{:>8}\t{mean}\t{median}\n", 
+        let mean: f64 = hist_mean(&hist, this_chrom_counted) / divisor;
+        let median: f64 = hist_median(&hist, this_chrom_counted) / divisor;
+        f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tcounted:{:>8}\tmean:{mean:.6}\tmedian:{median:.6}\n", 
             chrom, this_chrom_total, this_chrom_counted,
             mean=mean, median=median)).expect("Unable to write data");
         for (val, count) in hist.iter() {
             let val: f64 = (*val as f64) / divisor;
-            let freq: f64 = (*count as f64) / (total_counted as f64);
+            let freq: f64 = (*count as f64) / (this_chrom_counted as f64);
             f.write_fmt(format_args!("\t{:.4}:\t{:>7}\t{:.6}\n", val, count, freq)).expect("Unable to write data");
         }        
+    }
+    f.flush().expect("Unable to flush data");
+    drop(f);
+}
+
+fn pos_to_bed(pos_vec: &Vec<(&str, u64)>, mut f: BufWriter<File>) {
+    for (chrom, pos) in pos_vec.iter() {
+        f.write_fmt(format_args!("{}\t{}\n", chrom, pos)).expect("Unable to write data");
     }
     f.flush().expect("Unable to flush data");
     drop(f);
@@ -239,6 +280,7 @@ fn main() {
 
     // Read control bam first and evaluate minimums
     const FETCH_CHUNKSIZE: u64 = 1_000_000;
+    const FREQ_DIVISOR: f64 = 100.0;
     let target_chrom = vec![
         "chr1", "chr2", "chr3", "chr4", "chr5", 
         "chr6", "chr7", "chr8", "chr9", "chr10",
@@ -343,7 +385,7 @@ fn main() {
                 if (ctrl_ratio > 0.33) && (ctrl_ratio < 0.67) {
                     filter_score.insert(ControlFilterScore::PassedFRRatio);
                 }
-                let ctrl_ratio_usize = (ctrl_ratio * 100.0).round() as usize;
+                let ctrl_ratio_usize = (ctrl_ratio * FREQ_DIVISOR).round() as usize;
                 *frratio_freq.entry(ctrl_ratio_usize).or_insert(0) += 1;
                 
                 let ctrl_info = format!(
@@ -362,12 +404,12 @@ fn main() {
                 let ctrl_major_base = ctrl_allele_set.alleles[0].base();
                 let ctrl_major_count = ctrl_allele_set.alleles[0].count();
                 let ctrl_major_freq = (ctrl_major_count as f64) / (ctrl_cov as f64);
-                let ctrl_major_freq_usize = ctrl_major_freq.round() as usize;
-                if ctrl_major_freq_usize == 100 {
+                let ctrl_major_freq_usize = (ctrl_major_freq * FREQ_DIVISOR).round() as usize;
+                if ctrl_major_freq_usize == (FREQ_DIVISOR as usize) {
                     filter_score.insert(ControlFilterScore::InvariantSite);
                 }
                 *maj_freq.entry(ctrl_major_freq_usize).or_insert(0) += 1;
-                if ctrl_major_base.to_ascii_uppercase() == ref_char {
+                if ctrl_major_base.to_ascii_uppercase() == ref_char.to_ascii_uppercase() {
                     filter_score.insert(ControlFilterScore::ReferenceBase);
                 }
 
@@ -415,7 +457,7 @@ fn main() {
     let f = File::create(allele_freq_path).expect("Unable to create file");
     let mut f = BufWriter::new(f);
     f.write_fmt(format_args!("# Major allele frequency\n")).expect("Unable to write data");
-    fhist_to_file(&chrom_maj_freq, &chrom_totals, f, 100.0);
+    fhist_to_file(&chrom_maj_freq, &chrom_totals, f, FREQ_DIVISOR);
 
     // TODO: Output to fr ratio file
     // Print stats
@@ -423,17 +465,12 @@ fn main() {
     let f = File::create(frratio_path).expect("Unable to create file");
     let mut f = BufWriter::new(f);
     f.write_fmt(format_args!("# FR ratio frequency\n")).expect("Unable to write data");
-    fhist_to_file(&chrom_frratio_freq, &chrom_totals, f, 100.0);
+    fhist_to_file(&chrom_frratio_freq, &chrom_totals, f, FREQ_DIVISOR);
 
     // Output as bed file
     let bed_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".passed.bed");
     let f = File::create(bed_path).expect("Unable to create file");
-    let mut f = BufWriter::new(f);
-    for (chrom, pos) in passed_pos.iter() {
-        f.write_fmt(format_args!("{}\t{}\n", chrom, pos)).expect("Unable to write data");
-    }
-    f.flush().expect("Unable to flush data");
-    drop(f);
+    pos_to_bed(&passed_pos, BufWriter::new(f));
     
     // Evaluate control first. Do bq and mq filtering and test coverage
     // Evaluate samples. Do bq and mq for each sample and test coverage for each as well
