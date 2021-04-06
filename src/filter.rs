@@ -2,6 +2,25 @@ use bitflags::bitflags;
 
 use crate::pileup::{AlleleCount, FullBaseCount};
 
+
+bitflags! {
+    #[derive(Default)]
+    pub struct ControlFilterScore: usize {
+        // Greater than or equal to the min coverage post quality filtering
+        const PassedMinCov          = 0b00000001;
+        // Ratio between forward and reverse reads are within acceptable bounds
+        const PassedFRRatio         = 0b00000010;
+        // Site is solely composed of a single base
+        const InvariantSite         = 0b00000100;
+        // Site has the same major allele as the hg19 reference
+        const ReferenceBase         = 0b00001000;
+    }
+}
+impl ControlFilterScore {
+    pub fn to_bits(&self) -> usize { self.bits }
+}
+
+
 #[derive(Debug)]
 pub struct FilterParameters {
     // Drop N and non ACGT bases
@@ -22,26 +41,6 @@ pub struct FilterParameters {
     // Maximum total count of variant bases
     // Set to 10_000 if not needed (always pass)
     pub max_minor_ac: usize,
-}
-
-
-bitflags! {
-    #[derive(Default)]
-    pub struct ControlFilterScore: usize {
-        // At least one read after applying min bq and mq thresholds and drops
-        const PassedQualFilter      = 0b00000001;
-        // Greater than or equal to the min coverage post quality filtering
-        const PassedMinCov          = 0b00000010;
-        // Ratio between forward and reverse reads are within acceptable bounds
-        const PassedFRRatio         = 0b00000100;
-        // Site is solely composed of a single base
-        const InvariantSite         = 0b00001000;
-        // Site has variants but less than or equal to the max allowable number 
-        const PassedMaxVariantCount = 0b00010000;
-    }
-}
-impl ControlFilterScore {
-    pub fn to_bits(&self) -> usize { self.bits }
 }
 
 #[derive(Debug)]

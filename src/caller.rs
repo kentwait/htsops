@@ -111,7 +111,7 @@ pub fn filter_control(pileup: &mut SitePileup, params: &FilterParameters) -> Con
     // Quality filter
     // Minimum coverage post filter
     let cov: usize = if let Some(c) = pileup.quality_filter(params.min_bq, params.min_mq) {
-        if c > 0 { score.insert(ControlFilterScore::PassedQualFilter) }
+        // if c > 0 { score.insert(ControlFilterScore::PassedQualFilter) }
         if c >= params.min_cov { score.insert(ControlFilterScore::PassedMinCov) }
         c
     } else {
@@ -127,12 +127,12 @@ pub fn filter_control(pileup: &mut SitePileup, params: &FilterParameters) -> Con
         0 => (),
         1 => {
             score.insert(ControlFilterScore::InvariantSite);
-            score.insert(ControlFilterScore::PassedMaxVariantCount);
+            // score.insert(ControlFilterScore::PassedMaxVariantCount);
         },
         _ => {
             if (allele_set.len() == 2) && (allele_set.alleles[1].count() < params.max_minor_ac) {
                 score.insert(ControlFilterScore::InvariantSite);
-                score.insert(ControlFilterScore::PassedMaxVariantCount);
+                // score.insert(ControlFilterScore::PassedMaxVariantCount);
             }
         },
     };

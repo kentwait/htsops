@@ -292,8 +292,7 @@ pub struct SitePileup {
     pub mqs: Vec<u8>,
 }
 impl SitePileup {
-    pub fn from_str(sample_name: &str, ref_char: &char, cov: usize, base_str: &str, 
-            bq_str: &str, mq_str: &str) -> SitePileup {
+    pub fn from_str(sample_name: &str, ref_char: &char, cov: usize, base_str: &str, bq_str: &str, mq_str: &str) -> SitePileup {
         // Immediately return if base_str is "*" which means empty
         let sample_name = sample_name.to_owned();
         if base_str == "*" {
