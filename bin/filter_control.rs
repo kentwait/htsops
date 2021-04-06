@@ -147,9 +147,40 @@ fn hist_to_file(per_chrom_hist: &IndexMap<&str, BTreeMap<usize, usize>>, per_chr
         f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tcounted:{:>8}\t{mean}\t{median}\n", 
             chrom, this_chrom_total, this_chrom_counted,
             mean=mean, median=median)).expect("Unable to write data");
-        for (cov, count) in hist.iter() {
+        for (val, count) in hist.iter() {
             let freq: f64 = (*count as f64) / (total_counted as f64);
-            f.write_fmt(format_args!("\t{:>5}:\t{:>7}\t{:.6}\n", cov, count, freq)).expect("Unable to write data");
+            f.write_fmt(format_args!("\t{:>5}:\t{:>7}\t{:.6}\n", val, count, freq)).expect("Unable to write data");
+        }        
+    }
+    f.flush().expect("Unable to flush data");
+    drop(f);
+}
+
+fn fhist_to_file(per_chrom_hist: &IndexMap<&str, BTreeMap<usize, usize>>, per_chrom_total: &IndexMap<&str, usize>, mut f: BufWriter<File>, divisor: f64) {
+    let total_sites = per_chrom_total.iter().map(|(_,c)| c ).sum::<usize>();
+    let total_counted = per_chrom_hist.iter().map(|(_,hist)| {
+            hist.iter().map(|(_,c)| c ).sum::<usize>()
+        })
+        .sum::<usize>();
+    // Print stats
+    f.write_fmt(format_args!("# Total sites: {}\n", total_sites)).expect("Unable to write data");
+    f.write_fmt(format_args!("# Total counted: {}\n", total_counted)).expect("Unable to write data");
+    // Print coverage histogram
+    f.write_fmt(format_args!("# Per-chromosome histogram\n")).expect("Unable to write data");
+    for (&chrom, hist) in per_chrom_hist.iter() {
+        if hist.len() == 0 { continue }
+        // calculate mean
+        let this_chrom_total: usize = per_chrom_total.get(chrom).unwrap().to_owned();
+        let this_chrom_counted: usize = per_chrom_hist.get(chrom).unwrap().iter().map(|(_,c)| c ).sum::<usize>();
+        let mean: f64 = hist_mean(&hist, this_chrom_total) / divisor;
+        let median: f64 = hist_median(&hist, this_chrom_total) / divisor;
+        f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tcounted:{:>8}\t{mean}\t{median}\n", 
+            chrom, this_chrom_total, this_chrom_counted,
+            mean=mean, median=median)).expect("Unable to write data");
+        for (val, count) in hist.iter() {
+            let val: f64 = (*val as f64) / divisor;
+            let freq: f64 = (*count as f64) / (total_counted as f64);
+            f.write_fmt(format_args!("\t{:.4}:\t{:>7}\t{:.6}\n", val, count, freq)).expect("Unable to write data");
         }        
     }
     f.flush().expect("Unable to flush data");
@@ -194,19 +225,16 @@ fn main() {
             .value_name("INT")
             .help("Number of threads to use")
             .takes_value(true))
-        .arg(Arg::with_name("skip_bad_cov")
+        .arg(Arg::with_name("include_bad_cov")
             .short("k")
-            .long("skip_bad_cov")
-            .default_value("true")
-            .value_name("BOOL")
-            .help("Do not output sites whose coverage depth is less than the minimum")
-            .takes_value(true))
+            .long("include-bad-cov")
+            .help("Do not output sites whose coverage depth is less than the minimum"))
         .get_matches();
     let min_control_cov: usize = matches.value_of("min_control_cov").unwrap().parse::<usize>().unwrap();
     let min_control_bq: u8 = matches.value_of("min_control_bq").unwrap().parse::<u8>().unwrap();
     let min_control_mq: u8 = matches.value_of("min_control_mq").unwrap().parse::<u8>().unwrap();
     let threads: usize = matches.value_of("threads").unwrap().parse::<usize>().unwrap();
-    let skip_bad_cov: bool = matches.value_of("skip_bad_cov").unwrap().parse::<bool>().unwrap();
+    let include_bad_cov: bool = matches.is_present("include_bad_cov");
     let control_path: &str = matches.value_of("CONTROL_PILEUP").unwrap();
 
     // Read control bam first and evaluate minimums
@@ -307,14 +335,15 @@ fn main() {
                 *cov_freq.entry(ctrl_cov).or_insert(0) += 1;
 
                 // Skip sites where coverage is below minimum
-                if (ctrl_cov < min_control_cov) && skip_bad_cov { continue }
+                if ctrl_cov < 1 { continue }
+                if (ctrl_cov < min_control_cov) && !include_bad_cov { continue }
 
                 // Init bitflags
                 let mut filter_score = ControlFilterScore::PassedMinCov;
                 if (ctrl_ratio > 0.33) && (ctrl_ratio < 0.67) {
                     filter_score.insert(ControlFilterScore::PassedFRRatio);
                 }
-                let ctrl_ratio_usize = (ctrl_ratio * 1000.0).round() as usize;
+                let ctrl_ratio_usize = (ctrl_ratio * 100.0).round() as usize;
                 *frratio_freq.entry(ctrl_ratio_usize).or_insert(0) += 1;
                 
                 let ctrl_info = format!(
@@ -332,11 +361,12 @@ fn main() {
                 let ctrl_allele_set = AlleleSet::from_fullbasecount(&ctrl_bc);
                 let ctrl_major_base = ctrl_allele_set.alleles[0].base();
                 let ctrl_major_count = ctrl_allele_set.alleles[0].count();
-                let ctrl_major_freq = ((ctrl_major_count as f64 / ctrl_cov as f64) * 1000.0).round() as usize;
-                if ctrl_major_freq == 1000 {
+                let ctrl_major_freq = (ctrl_major_count as f64) / (ctrl_cov as f64);
+                let ctrl_major_freq_usize = ctrl_major_freq.round() as usize;
+                if ctrl_major_freq_usize == 100 {
                     filter_score.insert(ControlFilterScore::InvariantSite);
                 }
-                *maj_freq.entry(ctrl_major_freq).or_insert(0) += 1;
+                *maj_freq.entry(ctrl_major_freq_usize).or_insert(0) += 1;
                 if ctrl_major_base.to_ascii_uppercase() == ref_char {
                     filter_score.insert(ControlFilterScore::ReferenceBase);
                 }
@@ -345,7 +375,7 @@ fn main() {
                     "{ctrl_major_base}\t{ctrl_ratio:>7.4}\t{ctrl_major_freq:.4}",
                     ctrl_major_base=ctrl_major_base.to_ascii_lowercase(),
                     ctrl_ratio=ctrl_ratio,
-                    ctrl_major_freq=(ctrl_major_freq as f64) / 1000.0,
+                    ctrl_major_freq=ctrl_major_freq,
                 );
 
                 let site_info = format!(
@@ -385,7 +415,7 @@ fn main() {
     let f = File::create(allele_freq_path).expect("Unable to create file");
     let mut f = BufWriter::new(f);
     f.write_fmt(format_args!("# Major allele frequency\n")).expect("Unable to write data");
-    hist_to_file(&chrom_maj_freq, &chrom_totals, f);
+    fhist_to_file(&chrom_maj_freq, &chrom_totals, f, 100.0);
 
     // TODO: Output to fr ratio file
     // Print stats
@@ -393,7 +423,7 @@ fn main() {
     let f = File::create(frratio_path).expect("Unable to create file");
     let mut f = BufWriter::new(f);
     f.write_fmt(format_args!("# FR ratio frequency\n")).expect("Unable to write data");
-    hist_to_file(&chrom_frratio_freq, &chrom_totals, f);
+    fhist_to_file(&chrom_frratio_freq, &chrom_totals, f, 100.0);
 
     // Output as bed file
     let bed_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".passed.bed");
