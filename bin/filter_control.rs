@@ -105,6 +105,57 @@ fn qf_base_count(pileup: &SitePileup, min_bq: u8, min_mq: u8) -> FullBaseCount {
     FullBaseCount::from_vec(&passed_bases)
 }
 
+fn hist_mean(hist: &BTreeMap<usize, usize>, total: usize) -> f64 {
+    let mean: f64 = hist.iter().map(|(v, i)| (v*i) as f64 ).sum::<f64>() / (total as f64);
+    mean
+}
+
+fn hist_median(hist: &BTreeMap<usize, usize>, total: usize) -> f64 {
+    let midpoint = ((total as f64) / 2.0).round() as usize;
+    let median: f64 = {
+        let mut ci = 0;
+        let mut median = 0;
+        for (v, i) in hist.iter() {
+            ci += i;
+            if ci >= midpoint { 
+                median = *v;
+            }
+        }
+        median as f64
+    };
+    median
+}
+
+fn hist_to_file(per_chrom_hist: &IndexMap<&str, BTreeMap<usize, usize>>, per_chrom_total: &IndexMap<&str, usize>, mut f: BufWriter<File>) {
+    let total_sites = per_chrom_total.iter().map(|(_,c)| c ).sum::<usize>();
+    let total_counted = per_chrom_hist.iter().map(|(_,hist)| {
+            hist.iter().map(|(_,c)| c ).sum::<usize>()
+        })
+        .sum::<usize>();
+    // Print stats
+    f.write_fmt(format_args!("# Total sites: {}\n", total_sites)).expect("Unable to write data");
+    f.write_fmt(format_args!("# Total counted: {}\n", total_counted)).expect("Unable to write data");
+    // Print coverage histogram
+    f.write_fmt(format_args!("# Per-chromosome histogram\n")).expect("Unable to write data");
+    for (&chrom, hist) in per_chrom_hist.iter() {
+        if hist.len() == 0 { continue }
+        // calculate mean
+        let this_chrom_total: usize = per_chrom_total.get(chrom).unwrap().to_owned();
+        let this_chrom_counted: usize = per_chrom_hist.get(chrom).unwrap().iter().map(|(_,c)| c ).sum::<usize>();
+        let mean: f64 = hist_mean(&hist, this_chrom_total);
+        let median: f64 = hist_median(&hist, this_chrom_total);
+        f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tcounted:{:>8}\t{mean}\t{median}\n", 
+            chrom, this_chrom_total, this_chrom_counted,
+            mean=mean, median=median)).expect("Unable to write data");
+        for (cov, count) in hist.iter() {
+            let freq: f64 = (*count as f64) / (total_counted as f64);
+            f.write_fmt(format_args!("\t{:>5}:\t{:>7}\t{:.6}\n", cov, count, freq)).expect("Unable to write data");
+        }        
+    }
+    f.flush().expect("Unable to flush data");
+    drop(f);
+}
+
 fn main() {
     let matches = App::new("htsops spatial_pileup.rs")
         .version("0.0.1")
@@ -204,22 +255,17 @@ fn main() {
         }
     }).collect();
 
-    // Init counters
-    let mut total_count = 0;
-    let mut passed_mincov_count = 0;
-    let mut passed_frratio_count = 0;
-
     // Collect stats
     // histogram of coverage per chromosome
-    // key1: chrom, key2: cov, value: counter
     let mut chrom_cov_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(target_chrom.len());
     // histogram of major allele frequency per chromosome
     // key1: chrom, key2: major allele frequency as usize where 1.0 is 1000, value: counter
     let mut chrom_maj_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(target_chrom.len());
+    // histogram of forward-reverse ratio frequency per chromosome
+    // key1: chrom, key2: FR ratio as usize where 1.0 is 1000, value: counter
     let mut chrom_frratio_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(target_chrom.len());
-    
+    // Total number of sites visited per chrom
     let mut chrom_totals: IndexMap<&str, usize> = IndexMap::with_capacity(target_chrom.len());
-    let mut chrom_passed_totals: IndexMap<&str, usize> = IndexMap::with_capacity(target_chrom.len());
 
     // Visit chrom and then each site in control
     for &chrom in target_chrom.iter() {
@@ -236,7 +282,6 @@ fn main() {
         let frratio_freq = chrom_frratio_freq.get_mut(chrom).unwrap();
 
         let mut this_chrom_total = 0;
-        let mut this_passed_cov_total = 0;
         
         for i in 0..ul {
             tbx_reader.fetch(*chrom_tid_lookup.get(chrom).unwrap(), i*FETCH_CHUNKSIZE, (i+1)*FETCH_CHUNKSIZE).unwrap();
@@ -263,13 +308,11 @@ fn main() {
 
                 // Skip sites where coverage is below minimum
                 if (ctrl_cov < min_control_cov) && skip_bad_cov { continue }
-                this_passed_cov_total += 1;
 
                 // Init bitflags
                 let mut filter_score = ControlFilterScore::PassedMinCov;
                 if (ctrl_ratio > 0.33) && (ctrl_ratio < 0.67) {
                     filter_score.insert(ControlFilterScore::PassedFRRatio);
-                    passed_frratio_count += 1;
                 }
                 let ctrl_ratio_usize = (ctrl_ratio * 1000.0).round() as usize;
                 *frratio_freq.entry(ctrl_ratio_usize).or_insert(0) += 1;
@@ -326,12 +369,6 @@ fn main() {
             }
         }
         chrom_totals.insert(chrom, this_chrom_total);
-        total_count += this_chrom_total;
-
-        chrom_passed_totals.insert(chrom, this_passed_cov_total);
-        passed_mincov_count += this_passed_cov_total;
-
-        // break
     }
 
     // TODO: Output to cov freq file
@@ -339,121 +376,26 @@ fn main() {
     let cov_freq_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".cov.txt");
     let f = File::create(cov_freq_path).expect("Unable to create file");
     let mut f = BufWriter::new(f);
-    f.write_fmt(format_args!("# Total sites: {}\n", total_count)).expect("Unable to write data");
-    f.write_fmt(format_args!("# Total sites min_cov >= {}: {}\n", min_control_cov, passed_mincov_count)).expect("Unable to write data");
-    // Print coverage histogram
-    f.write_fmt(format_args!("# Per-chromosome coverage histogram\n")).expect("Unable to write data");
-    for (&chrom, hist) in chrom_cov_freq.iter() {
-        if hist.len() == 0 { continue }
-        // calculate mean
-        let this_chrom_total: usize = chrom_totals.get(chrom).unwrap().to_owned();
-        let mean: f64 = hist.iter().map(|(v, i)| (v*i) as f64 ).sum::<f64>() / (this_chrom_total as f64);
-        // calculate median
-        let midpoint = ((this_chrom_total as f64) / 2.0).round() as usize;
-        let median: usize = {
-            let mut ci = 0;
-            let mut median = 0;
-            for (v, i) in hist.iter() {
-                ci += i;
-                if ci >= midpoint { 
-                    median = *v;
-                }
-            }
-            median
-        };
-        f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tmin_cov>{}:{:>8}\t{mean}\t{median}\n", 
-            chrom, this_chrom_total, 
-            min_control_cov, chrom_passed_totals.get(chrom).unwrap(),
-            mean=mean, median=median)).expect("Unable to write data");
-        for (cov, count) in hist.iter() {
-            let freq: f64 = (*count as f64) / (total_count as f64);
-            f.write_fmt(format_args!("\t{:>5}:\t{:>7}\t{:.6}\n", cov, count, freq)).expect("Unable to write data");
-        }        
-    }
-    f.flush().expect("Unable to flush data");
-    drop(f);
+    f.write_fmt(format_args!("# Coverage\n")).expect("Unable to write data");
+    hist_to_file(&chrom_cov_freq, &chrom_totals, f);
 
     // TODO: Output to allele freq file
     // Print stats
     let allele_freq_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".af.txt");
     let f = File::create(allele_freq_path).expect("Unable to create file");
     let mut f = BufWriter::new(f);
-    f.write_fmt(format_args!("# Total sites: {}\n", total_count)).expect("Unable to write data");
-    f.write_fmt(format_args!("# Total sites min_cov >= {}: {}\n", min_control_cov, passed_mincov_count)).expect("Unable to write data");
-    // Print major allele frequency
-    f.write_fmt(format_args!("# Per-chromosome major allele freq histogram\n")).expect("Unable to write data");
-    for (&chrom, hist) in chrom_maj_freq.iter() {
-        if hist.len() == 0 { continue }
-        // calculate mean
-        let this_chrom_total: usize = chrom_totals.get(chrom).unwrap().to_owned();
-        let mean: f64 = hist.iter().map(|(v, i)| (v*i) as f64 ).sum::<f64>() / (this_chrom_total as f64);
-        // calculate median
-        let midpoint = ((this_chrom_total as f64) / 2.0).round() as usize;
-        let median: usize = {
-            let mut ci = 0;
-            let mut median = 0;
-            for (v, i) in hist.iter() {
-                ci += i;
-                if ci >= midpoint { 
-                    median = *v;
-                }
-            }
-            median
-        };
-        f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tmin_cov>{}:{:>8}\t{mean}\t{median}\n", 
-            chrom, this_chrom_total, 
-            min_control_cov, chrom_passed_totals.get(chrom).unwrap(),
-            mean=mean, median=median)).expect("Unable to write data");
-        for (maf, count) in hist.iter() {
-            let maf: f64 = (*maf as f64) / 1000.0;
-            let freq: f64 = (*count as f64) / (total_count as f64);
-            f.write_fmt(format_args!("\t{:.3}:\t{:>7}\t{:.6}\n", maf, count, freq)).expect("Unable to write data");
-        }        
-    }
-    f.flush().expect("Unable to flush data");
-    drop(f);
+    f.write_fmt(format_args!("# Major allele frequency\n")).expect("Unable to write data");
+    hist_to_file(&chrom_maj_freq, &chrom_totals, f);
 
     // TODO: Output to fr ratio file
     // Print stats
     let frratio_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".fr.txt");
     let f = File::create(frratio_path).expect("Unable to create file");
     let mut f = BufWriter::new(f);
-    f.write_fmt(format_args!("# Total sites: {}\n", total_count)).expect("Unable to write data");
-    f.write_fmt(format_args!("# Total sites min_cov >= {}: {}\n", min_control_cov, passed_mincov_count)).expect("Unable to write data");
-    // Print major allele frequency
-    f.write_fmt(format_args!("# Per-chromosome FR ratio freq histogram\n")).expect("Unable to write data");
-    for (&chrom, hist) in chrom_frratio_freq.iter() {
-        if hist.len() == 0 { continue }
-        // calculate mean
-        let this_chrom_total: usize = chrom_totals.get(chrom).unwrap().to_owned();
-        let mean: f64 = hist.iter().map(|(v, i)| (v*i) as f64 ).sum::<f64>() / (this_chrom_total as f64);
-        // calculate median
-        let midpoint = ((this_chrom_total as f64) / 2.0).round() as usize;
-        let median: usize = {
-            let mut ci = 0;
-            let mut median = 0;
-            for (v, i) in hist.iter() {
-                ci += i;
-                if ci >= midpoint { 
-                    median = *v;
-                }
-            }
-            median
-        };
-        f.write_fmt(format_args!("{:<10}\ttotal:{:>8}\tmin_cov>{}:{:>8}\t{mean}\t{median}\n", 
-            chrom, this_chrom_total, 
-            min_control_cov, chrom_passed_totals.get(chrom).unwrap(),
-            mean=mean, median=median)).expect("Unable to write data");
-        for (fr_ratio, count) in hist.iter() {
-            let fr_ratio: f64 = (*fr_ratio as f64) / 1000.0;
-            let freq: f64 = (*count as f64) / (total_count as f64);
-            f.write_fmt(format_args!("\t{:.3}:\t{:>7}\t{:.6}\n", fr_ratio, count, freq)).expect("Unable to write data");
-        }        
-    }
-    f.flush().expect("Unable to flush data");
-    drop(f);
+    f.write_fmt(format_args!("# FR ratio frequency\n")).expect("Unable to write data");
+    hist_to_file(&chrom_frratio_freq, &chrom_totals, f);
 
-    // TODO: Output as bed file
+    // Output as bed file
     let bed_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".passed.bed");
     let f = File::create(bed_path).expect("Unable to create file");
     let mut f = BufWriter::new(f);
@@ -466,7 +408,6 @@ fn main() {
     // Evaluate control first. Do bq and mq filtering and test coverage
     // Evaluate samples. Do bq and mq for each sample and test coverage for each as well
     // If passed control and passed ALL samples, then include in the output
-
 
     // Read all the mpileups and get the sites which is found in all
     // Saturate processing from queue based on the number of threads
