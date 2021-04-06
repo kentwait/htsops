@@ -18,8 +18,8 @@ name = "pileup"
 path = "bin/pileup.rs"
 
 [[bin]]
-name = "control_pileup"
-path = "bin/control_pileup.rs"
+name = "filter_control"
+path = "bin/filter_control.rs"
 
 [[bin]]
 name = "nr_list"
@@ -49,6 +49,7 @@ bincode = { version = "1.3" }
 bitflags = { version = "1.2" }
 fishers_exact = { version = "1.0" }
 clap = { version = "2.33" }
+indexmap = { version = "1.6.2" }
 # pyo3 = { version = "0.13.1", features = ["extension-module"] }
 # bio = { version = "0.32" }
 # bio-types = { version = "0.10" }
