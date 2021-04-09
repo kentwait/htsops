@@ -24,9 +24,10 @@ use clap::{Arg, App};
 use rust_htslib::tbx::{self, Read as TbxRead};
 use indexmap::IndexMap;
 
-use htsops::util::{validate_path, validate_qual, filelist_to_vec};
+use htsops::util::{validate_path, validate_qual, read_tabix};
 use htsops::pileup::{SitePileup, FullBaseCount, AlleleSet};
 use htsops::filter::ControlFilterScore;
+use htsops::constant::*;
 
 fn site_bq_histogram_str(scores: &Vec<u8>) -> String {
     let mut hist: BTreeMap<usize, usize> = vec![
@@ -328,68 +329,26 @@ fn main() {
     let control_path: &str = matches.value_of("CONTROL_PILEUP").unwrap();
 
     // Read control bam first and evaluate minimums
-    const FETCH_CHUNKSIZE: u64 = 1_000_000;
-    const FREQ_DIVISOR: f64 = 100.0;
     let passed_simple_filter = ControlFilterScore::PassedMinCov | ControlFilterScore::PassedFRRatio | ControlFilterScore::InvariantSite;
-    let target_chrom = vec![
-        "chr1", "chr2", "chr3", "chr4", "chr5", 
-        "chr6", "chr7", "chr8", "chr9", "chr10",
-        "chr11", "chr12", "chr13", "chr14", "chr15", 
-        "chr16", "chr17", "chr18", "chr19", "chr20",
-        "chr21", "chr22", "chrX", "chrY"];
-    let chrom_size: HashMap<&str, usize> = vec![
-            ("chr1", 249250621),
-            ("chr2", 243199373),
-            ("chr3", 198022430),
-            ("chr4", 191154276),
-            ("chr5", 180915260), 
-            ("chr6", 171115067),
-            ("chr7", 159138663),
-            ("chrX", 155270560),
-            ("chr8", 146364022),
-            ("chr9", 141213431),
-            ("chr10", 135534747),
-            ("chr11", 135006516),
-            ("chr12", 133851895),
-            ("chr13", 115169878),
-            ("chr14", 107349540),
-            ("chr15", 102531392), 
-            ("chr16", 90354753),
-            ("chr17", 81195210),
-            ("chr18", 78077248),
-            ("chr20", 63025520),
-            ("chrY", 59373566),
-            ("chr19", 59128983),
-            ("chr22", 51304566),
-            ("chr21", 48129895),
-        ].into_iter().collect();
     let mut passed_pos: Vec<(&str, u64)> = Vec::new();
     // Open control mpileup
-    let mut tbx_reader = tbx::Reader::from_path(&control_path)
-        .expect(&format!("Tabix reader could not open {}", &control_path));
-    tbx_reader.set_threads(threads).unwrap();
-    let chrom_tid_lookup: HashMap<&str, u64> = target_chrom.iter().map(|c| {
-        match tbx_reader.tid(c) {
-            Ok(tid) => (c.to_owned(), tid),
-            Err(_) => panic!("Could not resolve contig ID"),
-        }
-    }).collect();
+    let (mut tbx_reader, chrom_tid_lookup) = read_tabix(control_path);
 
     // Collect stats
     // histogram of coverage per chromosome
-    let mut chrom_cov_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(target_chrom.len());
+    let mut chrom_cov_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(HG19_CHROMS.len());
     // histogram of major allele frequency per chromosome
     // key1: chrom, key2: major allele frequency as usize where 1.0 is 1000, value: counter
-    let mut chrom_maj_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(target_chrom.len());
+    let mut chrom_maj_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(HG19_CHROMS.len());
     // histogram of forward-reverse ratio frequency per chromosome
     // key1: chrom, key2: FR ratio as usize where 1.0 is 1000, value: counter
-    let mut chrom_frratio_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(target_chrom.len());
+    let mut chrom_frratio_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(HG19_CHROMS.len());
     // Total number of sites visited per chrom
-    let mut chrom_totals: IndexMap<&str, usize> = IndexMap::with_capacity(target_chrom.len());
+    let mut chrom_totals: IndexMap<&str, usize> = IndexMap::with_capacity(HG19_CHROMS.len());
 
     // Visit chrom and then each site in control
-    for &chrom in target_chrom.iter() {
-        let ul: u64 = (chrom_size.get(chrom).unwrap().to_owned() as u64 / FETCH_CHUNKSIZE) + 1;
+    for &chrom in HG19_CHROMS.iter() {
+        let ul: u64 = (HG19_CHROM_LENS.get(chrom).unwrap().to_owned() as u64 / FETCH_CHUNKSIZE) + 1;
         
         // Init counters per chrom
         chrom_cov_freq.insert(chrom, BTreeMap::new());

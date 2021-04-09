@@ -1,6 +1,11 @@
 use std::path::Path;
 use std::fs::File;
 use std::io::{self, BufRead};
+use std::collections::HashMap;
+
+use rust_htslib::tbx::{self, Read as TbxRead};
+
+use crate::constant::*;
 
 
 pub fn validate_path(v: String) -> Result<(), String> {
@@ -54,4 +59,16 @@ pub fn samplelist_to_vec(path_str: &str) -> Vec<String> {
         })
         .collect();
     sample_names
+}
+
+pub fn read_tabix(path: &str) -> (tbx::Reader, HashMap<&str, u64>) {
+    let tbx_reader = tbx::Reader::from_path(&path)
+        .expect(&format!("Tabix reader could not open {}", &path));
+    let chrom_tid_lookup: HashMap<&str, u64> = HG19_CHROMS.iter().map(|c| {
+        match tbx_reader.tid(c) {
+            Ok(tid) => (c.to_owned(), tid),
+            Err(_) => panic!("Could not resolve contig ID"),
+        }
+    }).collect();
+    (tbx_reader, chrom_tid_lookup)
 }

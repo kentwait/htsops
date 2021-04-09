@@ -2,10 +2,13 @@
 // use pyo3::wrap_pyfunction;
 
 // use std::collections::HashMap;
+#[macro_use]
+extern crate lazy_static;
 
 pub mod pileup;
 pub mod filter;
 pub mod caller;
+pub mod constant;
 pub mod util;
 
 // #[pyfunction]
