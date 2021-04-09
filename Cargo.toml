@@ -57,10 +57,11 @@ clap = { version = "2.33" }
 indexmap = { version = "1.6.2" }
 lazy_static = { version="1.4.0" }
 crossbeam = { version = "0.8.0" }
+bgzip = { version = "0.1.0" }
+flate2 = { version = "1.0" }
 # pyo3 = { version = "0.13.1", features = ["extension-module"] }
 # bio = { version = "0.32" }
 # bio-types = { version = "0.10" }
-# flate2 = { version = "1.0" }
 # sled = { version = "0.34" }
 
 [build]

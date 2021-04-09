@@ -15,14 +15,17 @@
 // --threads         : Number of threads to use
 use std::collections::{HashMap, HashSet, BTreeMap, VecDeque};
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::fmt;
 
 use clap::{Arg, App};
 use rust_htslib::tbx::{self, Read as TbxRead};
 use indexmap::IndexMap;
-use crossbeam::channel::{self, select, bounded};
+use crossbeam::channel::bounded;
 use crossbeam::thread;
+use bgzip::BGZFWriter;
+use flate2;
+use std::process::Command;
 
 use htsops::util::{validate_path, validate_qual, read_tabix};
 use htsops::pileup::{SitePileup, FullBaseCount, AlleleSet};
@@ -102,6 +105,7 @@ struct PileupStats {
     minor_allele: Option<char>,
     minor_freq: f64,
     site_flags: ControlFilterScore,
+    cov: usize,
 }
 impl PileupStats {
     fn from_pileup(pileup: &SitePileup, ref_char: &char, min_fratio: f64, max_fratio: f64) -> PileupStats {
@@ -130,6 +134,7 @@ impl PileupStats {
         }
 
         PileupStats {
+            cov: fbc.total(),
             full_base_count: fbc,
             major_allele: *maj_base,
             major_freq: maj_freq,
@@ -153,14 +158,14 @@ impl PileupStats {
 }
 impl fmt::Display for PileupStats {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{site_flags}\t{majorb}:{majorf:.3}\t{minorb}:{minorf:.3}\t{cov}\t{fbc}", 
+        write!(f, "{site_flags}\t{majorb}:{majorf:.3}\t{minorb}:{minorf:.3}\t{fbc}\t{cov}", 
             site_flags=self.site_flags.to_bits(),
             majorb=self.major_allele,
             majorf=self.major_freq,
             minorb={if let Some(b) = self.minor_allele { b } else { '-' }},
             minorf=self.minor_freq,
-            cov=self.full_base_count.total(),
             fbc=self.full_base_count,
+            cov=self.cov,
         )
     }
 }
@@ -204,11 +209,17 @@ fn main() {
             .value_name("FLOAT")
             .help("Maximum acceptable proportion of forward reads over total coverage depth")
             .takes_value(true))
-        .arg(Arg::with_name("CONTROL_PILEUP")
-            .help("Control mpileup path")
-            .required(true)
-            .index(1)
-            .validator(validate_path))
+        .arg(Arg::with_name("out")
+            .short("o")
+            .long("out")
+            .default_value("")
+            .value_name("PATH")
+            .help("Set output path. If blank or not specified, output is printed to stdout")
+            .takes_value(true))
+        .arg(Arg::with_name("bgzip")
+            .short("z")
+            .long("bgzip")
+            .help("Compress output using bgzip"))
         .arg(Arg::with_name("threads")
             .short("t")
             .long("threads")
@@ -220,12 +231,21 @@ fn main() {
         //     .short("k")
         //     .long("include-bad-cov")
         //     .help("Do not output sites whose coverage depth is less than the minimum"))
+        .arg(Arg::with_name("CONTROL_PILEUP")
+            .help("Control mpileup path")
+            .required(true)
+            .index(1)
+            .validator(validate_path))
         .get_matches();
+
+    // Assign to variables
     let min_cov: usize = matches.value_of("min_cov").unwrap().parse::<usize>().unwrap();
     let min_bq: u8 = matches.value_of("min_bq").unwrap().parse::<u8>().unwrap();
     let min_mq: u8 = matches.value_of("min_mq").unwrap().parse::<u8>().unwrap();
     let min_fratio: f64 = matches.value_of("min_fratio").unwrap().parse::<f64>().unwrap();
     let max_fratio: f64 = matches.value_of("max_fratio").unwrap().parse::<f64>().unwrap();
+    let output_path: Option<&str> = matches.value_of("out");
+    let bgzip: bool = matches.is_present("bgzip");
     let threads: usize = matches.value_of("threads").unwrap().parse::<usize>().unwrap();
     // let include_bad_cov: bool = matches.is_present("include_bad_cov");
     let control_path: &str = matches.value_of("CONTROL_PILEUP").unwrap();
@@ -245,6 +265,7 @@ fn main() {
     // let (send_het, recv_het) = bounded(1);
 
     let mut collated_data: BTreeMap<usize, (SiteInfo, SitePileup, PileupStats)> = BTreeMap::new();
+    let mut chrom_covs: HashMap<String, Vec<usize>> = HashMap::new();
 
     thread::scope(|s| {
         // Producer thread
@@ -290,60 +311,70 @@ fn main() {
 
         // Sink
         for (i, info, pileup, stats) in recv_site.iter() {
+            chrom_covs.entry(info.chrom.clone()).or_insert(Vec::new()).push(stats.full_base_count.total());
             collated_data.insert(i, (info, pileup, stats));
         }
     }).unwrap();
 
-    for (_, (info, pileup, stats)) in collated_data.iter() {
-        println!("{}\t{}\t{}", info, stats, pileup);
+    // Compute per chromosome average cov depth
+    let chrom_mean_cov: HashMap<&str, f64> = chrom_covs.iter()
+        .map(|(chrom, covs)| (chrom.as_ref(), (covs.iter().sum::<usize>() as f64) / (covs.len() as f64)))
+        .collect();
+    // Compute per chromosome cov cummulative distribution
+    let chrom_cumdist: HashMap<&str, BTreeMap<usize, f64>> = chrom_covs.iter()
+        .map(|(chrom, covs)| {
+            let mut btm: BTreeMap<usize, usize> = BTreeMap::new();
+            covs.iter().for_each(|cov| *btm.entry(*cov).or_insert(0) += 1 );
+            let cumdist: BTreeMap<usize, f64> = btm.into_iter()
+                .map(|(cov, cnt)| (cov, (cnt as f64) / (covs.len() as f64)))
+                .collect();
+            (chrom.as_ref(), cumdist)
+        })
+        .collect();
+
+    // Output either to stdout or to file
+    let stdout = io::stdout();
+    let mut write_h: Box<dyn Write> = match output_path {
+        Some(path) => {
+            let f = File::create(path).expect("Unable to create file");
+            let writer = BufWriter::new(f);
+            if bgzip {
+                Box::new(BGZFWriter::new(writer, flate2::Compression::default()))
+            } else {
+                Box::new(writer)
+            }
+        },
+        None => {
+            Box::new(stdout.lock())
+        }
+    };
+    // Write to writer
+    for (_, (info, _, stats)) in collated_data.iter() {
+        let chrom: &str = info.chrom.as_ref();
+        let cov_pctile = chrom_cumdist.get(&chrom).unwrap().get(&stats.cov).unwrap();
+        write_h.write_fmt(format_args!("{}\t{}\t{:.4}\n", info, stats, cov_pctile)).unwrap();
     }
+    write_h.flush().unwrap();
 
-    // // TODO: Output to cov freq file
-    // // Print stats
-    // let cov_freq_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".cov.txt");
-    // let f = File::create(cov_freq_path).expect("Unable to create file");
-    // let mut f = BufWriter::new(f);
-    // f.write_fmt(format_args!("# Coverage\n")).expect("Unable to write data");
-    // hist_to_file(&chrom_cov_freq, &chrom_totals, f);
-
-    // // TODO: Output to allele freq file
-    // // Print stats
-    // let allele_freq_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".af.txt");
-    // let f = File::create(allele_freq_path).expect("Unable to create file");
-    // let mut f = BufWriter::new(f);
-    // f.write_fmt(format_args!("# Major allele frequency\n")).expect("Unable to write data");
-    // fhist_to_file(&chrom_maj_freq, &chrom_totals, f, FREQ_DIVISOR);
-
-    // // TODO: Output to fr ratio file
-    // // Print stats
-    // let frratio_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".fr.txt");
-    // let f = File::create(frratio_path).expect("Unable to create file");
-    // let mut f = BufWriter::new(f);
-    // f.write_fmt(format_args!("# FR ratio frequency\n")).expect("Unable to write data");
-    // fhist_to_file(&chrom_frratio_freq, &chrom_totals, f, FREQ_DIVISOR);
-
-    // // Output as bed file
-    // let bed_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".passed.bed");
-    // let f = File::create(bed_path).expect("Unable to create file");
-    // pos_to_bed(&passed_pos, BufWriter::new(f));
-    
-    // Evaluate control first. Do bq and mq filtering and test coverage
-    // Evaluate samples. Do bq and mq for each sample and test coverage for each as well
-    // If passed control and passed ALL samples, then include in the output
-
-    // Read all the mpileups and get the sites which is found in all
-    // Saturate processing from queue based on the number of threads
-    // let (tx, rx) = mpsc::channel();
-    // for i in 0..threads {
-    //     let ttx = tx.clone();
-    //     thread::spawn(move || {
-    //         ttx.send(i).unwrap();
-    //     });
-    // }
-    // Close send to finish
-    // drop(tx);
-    // for received in rx {
-    //     println!("Got: {}", received);
-    // }
-
+    // Index if bgzipped
+    if let Some(path) = output_path {
+        if bgzip {
+            let status = Command::new("tabix")
+                    .args(&["-s", "1"])
+                    .args(&["-b", "2"])
+                    .args(&["-e", "2"])
+                    .arg(&path)
+                    .output()
+                    .expect(&format!("error executing tabix for {}", &path))
+                    .status;
+            if status.success() {
+                println!("tabix  : {} {}", &path, status.code().take().unwrap());
+            } else {
+                match status.code() {
+                    Some(code) => println!("ERROR tabix  : {} {}", &path, code),
+                    None       => println!("tabix terminated by signal")
+                }
+            }
+        }
+    }
 }
