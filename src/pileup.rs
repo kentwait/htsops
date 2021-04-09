@@ -548,12 +548,12 @@ impl fmt::Display for SitePileup {
             .cloned()
             .collect();
         let bqs_str: String = self.bqs.iter()
-            .map(|&u| u as char)
+            .map(|&u| (u + 33) as char)
             .collect::<Vec<char>>()
             .into_iter()
             .collect();
         let mqs_str: String = self.mqs.iter()
-            .map(|&u| u as char)
+            .map(|&u| (u + 33) as char)
             .collect::<Vec<char>>()
             .into_iter()
             .collect();
