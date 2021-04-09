@@ -16,270 +16,22 @@
 use std::collections::{HashMap, HashSet, BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::fmt;
 
 use clap::{Arg, App};
 use rust_htslib::tbx::{self, Read as TbxRead};
 use indexmap::IndexMap;
-use std::time::Duration;
 use crossbeam::channel::{self, select, bounded};
 use crossbeam::thread;
-
 
 use htsops::util::{validate_path, validate_qual, read_tabix};
 use htsops::pileup::{SitePileup, FullBaseCount, AlleleSet};
 use htsops::filter::ControlFilterScore;
 use htsops::constant::*;
 
-fn site_bq_histogram_str(scores: &Vec<u8>) -> String {
-    let mut hist: BTreeMap<usize, usize> = vec![
-            (0, 0),
-            (5, 0),
-            (10, 0),
-            (15, 0),
-            (20, 0),
-            (25, 0),
-            (30, 0),
-            (35, 0),
-            (40, 0),
-            (41, 0),
-        ].into_iter().collect();
-    // format!("{:?}", scores)
-    scores.into_iter().for_each(|s| {
-        match *s {
-            v if v == 0            => *hist.entry( 0).or_insert(0) += 1,
-            v if v >  0 && v <=  5 => *hist.entry( 5).or_insert(0) += 1,
-            v if v >  5 && v <= 10 => *hist.entry(10).or_insert(0) += 1,
-            v if v > 10 && v <= 15 => *hist.entry(15).or_insert(0) += 1,
-            v if v > 15 && v <= 20 => *hist.entry(20).or_insert(0) += 1,
-            v if v > 20 && v <= 25 => *hist.entry(25).or_insert(0) += 1,
-            v if v > 25 && v <= 30 => *hist.entry(30).or_insert(0) += 1,
-            v if v > 30 && v <= 35 => *hist.entry(35).or_insert(0) += 1,
-            v if v > 35 && v <= 40 => *hist.entry(40).or_insert(0) += 1,
-            _                      => *hist.entry(41).or_insert(0) += 1,
-        }
-    });
-    hist.into_iter().map(|(_,v)| format!("{}", v)).collect::<Vec<String>>().join(":")
-}
 
-fn site_mq_histogram_str(scores: &Vec<u8>) -> String {
-    let mut hist: BTreeMap<usize, usize> = vec![
-            (0, 0),
-            (10, 0),
-            (20, 0),
-            (30, 0),
-            (40, 0),
-            (50, 0),
-            (60, 0),
-            (61, 0),
-        ].into_iter().collect();
-    // format!("{:?}", scores)
-    scores.into_iter().for_each(|s| {
-        match *s {
-            v if v == 0            => *hist.entry( 0).or_insert(0) += 1,
-            v if v >  0 && v <= 10 => *hist.entry(10).or_insert(0) += 1,
-            v if v > 10 && v <= 20 => *hist.entry(20).or_insert(0) += 1,
-            v if v > 20 && v <= 30 => *hist.entry(30).or_insert(0) += 1,
-            v if v > 30 && v <= 40 => *hist.entry(40).or_insert(0) += 1,
-            v if v > 40 && v <= 50 => *hist.entry(50).or_insert(0) += 1,
-            v if v > 50 && v <= 60 => *hist.entry(60).or_insert(0) += 1,
-            _                      => *hist.entry(61).or_insert(0) += 1,
-        }
-    });
-    hist.into_iter().map(|(_,v)| format!("{}", v)).collect::<Vec<String>>().join(":")
-}
-
-fn qf_base_count(pileup: &SitePileup, min_bq: u8, min_mq: u8) -> FullBaseCount {
-    if pileup.bases.len() != pileup.bqs.len() {
-        panic!("bases len ({}) != bqs len ({})", pileup.bases.len(), pileup.bqs.len())
-    }
-    if pileup.bases.len() != pileup.mqs.len() {
-        panic!("bases len ({}) != mqs len ({})", pileup.bases.len(), pileup.mqs.len())
-    }
-    let passed_bases: Vec<char> = pileup.bases.iter().enumerate()
-        .filter_map(|(i, &b)| {
-            if (b == 'N') || (b == 'n') { return None }
-            if (b == 'D') || (b == 'd') { return None }
-            let bq = pileup.bqs[i];
-            let mq = pileup.mqs[i];
-            if (bq >= min_bq) && (mq >= min_mq) { return Some(b) }
-            return None
-        }).collect();
-    FullBaseCount::from_vec(&passed_bases)
-}
-
-fn hist_mean(hist: &BTreeMap<usize, usize>, total: usize) -> f64 {
-    let mean: f64 = hist.iter().map(|(v, i)| (v*i) as f64 ).sum::<f64>() / (total as f64);
-    mean
-}
-
-fn hist_median(hist: &BTreeMap<usize, usize>, total: usize) -> f64 {
-    let midpoint = ((total as f64) / 2.0).round() as usize;
-    let median: f64 = {
-        let mut ci = 0;
-        let mut median = 0;
-        for (v, i) in hist.iter() {
-            ci += i;
-            if ci >= midpoint { 
-                median = *v;
-                break
-            }
-        }
-        median as f64
-    };
-    median
-}
-
-fn hist_to_file(per_chrom_hist: &IndexMap<&str, BTreeMap<usize, usize>>, per_chrom_total: &IndexMap<&str, usize>, mut f: BufWriter<File>) {
-    let total_sites = per_chrom_total.iter().map(|(_,c)| c ).sum::<usize>();
-    let total_counted = per_chrom_hist.iter().map(|(_,hist)| {
-            hist.iter().map(|(_,c)| c ).sum::<usize>()
-        })
-        .sum::<usize>();
-    // Overall
-    let mut all_hist: BTreeMap<usize, usize> = BTreeMap::new();
-    for (_, hist) in per_chrom_hist.iter() {
-        for (&val, &count) in hist.iter() {
-            *all_hist.entry(val).or_insert(0) += count;
-        }
-    }
-    // Print overall stats
-    f.write_fmt(format_args!("# Overall histogram\n"))
-        .expect("Unable to write data");
-    f.write_fmt(format_args!("# total_sites:{}\n", total_sites))
-        .expect("Unable to write data");
-    f.write_fmt(format_args!("# total_counted:{}\n", total_counted))
-        .expect("Unable to write data");
-    let mean: f64 = hist_mean(&all_hist, total_counted);
-    let median: f64 = hist_median(&all_hist, total_counted);
-    f.write_fmt(format_args!("# mean:{mean:.2}\tmedian:{median:.1}\n",
-        mean=mean, median=median)).expect("Unable to write data");
-    let mut cum_freq = 0.0;
-    for (val, count) in all_hist.iter() {
-        let freq: f64 = (*count as f64) / (total_counted as f64);
-        cum_freq += freq;
-        f.write_fmt(format_args!("\t{:>5}:\t{:>9}\t{:.6}\t{:.6}\n",
-            val, count, freq, cum_freq)).expect("Unable to write data");
-    }        
-    f.flush().expect("Unable to flush data");
-    // Print coverage histogram
-    f.write_fmt(format_args!("# Per-chromosome histogram\n")).expect("Unable to write data");
-    for (&chrom, hist) in per_chrom_hist.iter() {
-        if hist.len() == 0 { continue }
-        // calculate mean
-        let this_chrom_total: usize = per_chrom_total.get(chrom).unwrap().to_owned();
-        let this_chrom_counted: usize = per_chrom_hist.get(chrom).unwrap().iter().map(|(_,c)| c ).sum::<usize>();
-        let mean: f64 = hist_mean(&hist, this_chrom_counted);
-        let median: f64 = hist_median(&hist, this_chrom_counted);
-        f.write_fmt(format_args!("{:<10}\ttotal:{:>9}\tcounted:{:>9}\tmean:{mean:.2}\tmedian:{median:.1}\n", 
-            chrom, this_chrom_total, this_chrom_counted,
-            mean=mean, median=median)).expect("Unable to write data");
-        let mut cum_freq = 0.0;
-        for (val, count) in hist.iter() {
-            let freq: f64 = (*count as f64) / (this_chrom_counted as f64);
-            cum_freq += freq;
-            f.write_fmt(format_args!("\t{:>5}:\t{:>9}\t{:.6}\t{:.6}\n",
-                val, count, freq, cum_freq)).expect("Unable to write data");
-        }        
-    }
-    f.flush().expect("Unable to flush data");
-    drop(f);
-}
-
-fn fhist_to_file(per_chrom_hist: &IndexMap<&str, BTreeMap<usize, usize>>, per_chrom_total: &IndexMap<&str, usize>, mut f: BufWriter<File>, divisor: f64) {
-    let total_sites = per_chrom_total.iter().map(|(_,c)| c ).sum::<usize>();
-    let total_counted = per_chrom_hist.iter().map(|(_,hist)| {
-            hist.iter().map(|(_,c)| c ).sum::<usize>()
-        })
-        .sum::<usize>();
-    // Overall
-    let mut all_hist: BTreeMap<usize, usize> = BTreeMap::new();
-    for (_, hist) in per_chrom_hist.iter() {
-        for (&val, &count) in hist.iter() {
-            *all_hist.entry(val).or_insert(0) += count;
-        }
-    }
-    // Print overall stats
-    f.write_fmt(format_args!("# Overall histogram\n"))
-        .expect("Unable to write data");
-    f.write_fmt(format_args!("# total_sites:{}\n", total_sites))
-        .expect("Unable to write data");
-    f.write_fmt(format_args!("# total_counted:{}\n", total_counted))
-        .expect("Unable to write data");
-    let mean: f64 = hist_mean(&all_hist, total_counted) / divisor;
-    let median: f64 = hist_median(&all_hist, total_counted) / divisor;
-    f.write_fmt(format_args!("# mean:{mean:.6}\tmedian:{median:.6}\n",
-        mean=mean, median=median)).expect("Unable to write data");
-    let mut cum_freq = 0.0;
-    for (val, count) in all_hist.iter() {
-        let val: f64 = (*val as f64) / divisor;
-        let freq: f64 = (*count as f64) / (total_counted as f64);
-        cum_freq += freq;
-        f.write_fmt(format_args!("\t{:.4}:\t{:>9}\t{:.6}\t{:.6}\n",
-            val, count, freq, cum_freq)).expect("Unable to write data"); 
-    }        
-    f.flush().expect("Unable to flush data");
-    // Print coverage histogram
-    f.write_fmt(format_args!("# Per-chromosome histogram\n"))
-        .expect("Unable to write data");
-    for (&chrom, hist) in per_chrom_hist.iter() {
-        if hist.len() == 0 { continue }
-        // calculate mean
-        let this_chrom_total: usize = per_chrom_total.get(chrom).unwrap().to_owned();
-        let this_chrom_counted: usize = per_chrom_hist.get(chrom).unwrap().iter()
-            .map(|(_,c)| c ).sum::<usize>();
-        let mean: f64 = hist_mean(&hist, this_chrom_counted) / divisor;
-        let median: f64 = hist_median(&hist, this_chrom_counted) / divisor;
-        f.write_fmt(format_args!("{:<10}\ttotal:{:>9}\tcounted:{:>9}\tmean:{mean:.6}\tmedian:{median:.6}\n", 
-            chrom, this_chrom_total, this_chrom_counted,
-            mean=mean, median=median)).expect("Unable to write data");
-        let mut cum_freq = 0.0;
-        for (val, count) in hist.iter() {
-            let val: f64 = (*val as f64) / divisor;
-            let freq: f64 = (*count as f64) / (this_chrom_counted as f64);
-            cum_freq += freq;
-            f.write_fmt(format_args!("\t{:.4}:\t{:>9}\t{:.6}\t{:.6}\n",
-                val, count, freq, cum_freq)).expect("Unable to write data");
-        }        
-    }
-    f.flush().expect("Unable to flush data");
-    drop(f);
-}
-
-fn pos_to_bed(pos_vec: &Vec<(&str, u64)>, mut f: BufWriter<File>) {
-    let (mut start_chrom, mut start_pos) = pos_vec[0];
-    let (mut last_chrom, mut last_pos) = pos_vec[0];
-    // let mut intervals: Vec<(&str, u64, u64)> = Vec::new();
-    // for i in 1..pos_vec.len() {
-    //     let (this_chrom, this_pos) = pos_vec[i];
-    //     if (last_chrom != this_chrom) || (last_pos+1 != this_pos) {
-    //         intervals.push((start_chrom, start_pos, last_pos));
-    //         start_chrom = last_chrom;
-    //         start_pos = last_pos;
-    //     }
-    //     last_chrom = this_chrom;
-    //     last_pos = this_pos;
-    // }
-    let intervals: Vec<(&str, u64, u64)> = (1..pos_vec.len()).filter_map(|i| {
-            let (this_chrom, this_pos) = pos_vec[i];
-            let mut interval = None;
-            if (last_chrom != this_chrom) || (last_pos+1 != this_pos) {
-                interval = Some((start_chrom, start_pos, last_pos));
-                start_chrom = this_chrom;
-                start_pos = this_pos;
-            }
-            last_chrom = this_chrom;
-            last_pos = this_pos;
-            interval
-        })
-        .collect();
-    for (chrom, start, end) in intervals.iter() {
-        f.write_fmt(format_args!("{}\t{}\t{}\n", chrom, start, end)).expect("Unable to write data");
-    }
-    f.flush().expect("Unable to flush data");
-    drop(f);
-}
-
-fn bytes_to_pileup(b: Vec<u8>) -> (String, u64, char, SitePileup) {
+/// Convert raw bytes into a Pileup object
+fn bytes_to_pileup(b: Vec<u8>) -> (SiteInfo, SitePileup) {
     // Convert binary mpileup line and parse
     let record_string = String::from_utf8(b).unwrap();
     let cols: Vec<String> = record_string
@@ -295,14 +47,16 @@ fn bytes_to_pileup(b: Vec<u8>) -> (String, u64, char, SitePileup) {
         .to_ascii_uppercase();
     let sample_name = "B";
 
-    (chrom, pos, ref_char, SitePileup::from_str(
+    (SiteInfo{ chrom, pos, ref_char },
+     SitePileup::from_str(
         sample_name,
         &ref_char,
         (&cols[3]).parse::<usize>().unwrap(), // cov
-        &cols[4], &cols[5], &cols[6],         // base_str, bq_str, mq_str
-    ))
+        &cols[4], &cols[5], &cols[6])         // base_str, bq_str, mq_str
+    )
 }
 
+/// Filter pileup based on base and mapping quality scores
 fn qual_filter_pileup(pileup: &SitePileup, min_bq: u8, min_mq: u8) -> SitePileup {
     if pileup.bases.len() != pileup.bqs.len() {
         panic!("bases len ({}) != bqs len ({})", pileup.bases.len(), pileup.bqs.len())
@@ -325,6 +79,88 @@ fn qual_filter_pileup(pileup: &SitePileup, min_bq: u8, min_mq: u8) -> SitePileup
         indels: HashMap::new(),
         bqs: passed_pos.iter().map(|&i| pileup.bqs[i]).collect(),
         mqs: passed_pos.iter().map(|&i| pileup.mqs[i]).collect(),
+    }
+}
+
+#[derive(Debug)]
+pub struct SiteInfo {
+    pub chrom: String,
+    pub pos: u64,
+    pub ref_char: char,
+}
+impl fmt::Display for SiteInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}\t{}\t{}", self.chrom, self.pos, self.ref_char)
+    }
+}
+
+#[derive(Debug)]
+struct PileupStats {
+    full_base_count: FullBaseCount,
+    major_allele: char,
+    major_freq: f64,
+    minor_allele: Option<char>,
+    minor_freq: f64,
+    site_flags: ControlFilterScore,
+}
+impl PileupStats {
+    fn from_pileup(pileup: &SitePileup, ref_char: &char, min_fratio: f64, max_fratio: f64) -> PileupStats {
+        let cov = pileup.cov();
+        let mut site_flags = ControlFilterScore::PassedMinCov;
+        // Convert to FullBaseCount
+        let fbc = pileup.full_base_count();
+        // compute forward ratio
+        let fwd_ratio = (fbc.forward() as f64) / (cov as f64);
+        if (fwd_ratio >= min_fratio) && (fwd_ratio < max_fratio) {
+            site_flags.insert(ControlFilterScore::PassedFRRatio);
+        }
+        // compute major allele
+        // TODO: Code is naive and cannot handle het sites
+        let allele_set = AlleleSet::from_fullbasecount(&fbc);
+        let maj_base = allele_set.alleles[0].base();
+        let maj_cnt = allele_set.alleles[0].count();
+        let maj_freq = (maj_cnt as f64) / (cov as f64);
+        // check if invariant
+        if maj_freq == 1.0 {
+            site_flags.insert(ControlFilterScore::InvariantSite);
+        }
+        // check if ref_char == maj_base
+        if ref_char == maj_base {
+            site_flags.insert(ControlFilterScore::ReferenceBase);
+        }
+
+        PileupStats {
+            full_base_count: fbc,
+            major_allele: *maj_base,
+            major_freq: maj_freq,
+            minor_allele: None,
+            minor_freq: 0.0,
+            site_flags: site_flags,
+        }
+    }
+    fn major_fratio(&self) -> f64 {
+        let f_cnt = self.full_base_count.full_count_of(&self.major_allele.to_ascii_uppercase());
+        let fr_cnt = self.full_base_count.count_of(&self.major_allele);
+        (f_cnt as f64) / (fr_cnt as f64)
+    }
+    fn minor_fratio(&self) -> f64 {
+        if self.minor_freq == 0.0 { return 0.0 }
+        let minor_allele = self.minor_allele.unwrap();
+        let f_cnt = self.full_base_count.full_count_of(&minor_allele.to_ascii_uppercase());
+        let fr_cnt = self.full_base_count.count_of(&minor_allele);
+        (f_cnt as f64) / (fr_cnt as f64)
+    }
+}
+impl fmt::Display for PileupStats {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{site_flags}\t{majorb}:{majorf}\t{minorb}:{minorf}\t{fbc}", 
+            site_flags=self.site_flags.to_bits(),
+            majorb=self.major_allele,
+            majorf=self.major_freq,
+            minorb={if let Some(b) = self.minor_allele { b } else { '-' }},
+            minorf=self.minor_freq,
+            fbc=self.full_base_count,
+        )
     }
 }
 
@@ -393,24 +229,9 @@ fn main() {
     // let include_bad_cov: bool = matches.is_present("include_bad_cov");
     let control_path: &str = matches.value_of("CONTROL_PILEUP").unwrap();
 
-    // Read control bam first and evaluate minimums
-    let passed_simple_filter = ControlFilterScore::PassedMinCov | ControlFilterScore::PassedFRRatio | ControlFilterScore::InvariantSite;
-    let mut passed_pos: Vec<(&str, u64)> = Vec::new();
     // Open control mpileup
     let (mut tbx_reader, chrom_tid_lookup) = read_tabix(control_path);
-
-    // Collect stats
-    // histogram of coverage per chromosome
-    let mut chrom_cov_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(HG19_CHROMS.len());
-    // histogram of major allele frequency per chromosome
-    // key1: chrom, key2: major allele frequency as usize where 1.0 is 1000, value: counter
-    let mut chrom_maj_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(HG19_CHROMS.len());
-    // histogram of forward-reverse ratio frequency per chromosome
-    // key1: chrom, key2: FR ratio as usize where 1.0 is 1000, value: counter
-    let mut chrom_frratio_freq: IndexMap<&str,  BTreeMap<usize, usize>> = IndexMap::with_capacity(HG19_CHROMS.len());
-    // Total number of sites visited per chrom
-    let mut chrom_totals: IndexMap<&str, usize> = IndexMap::with_capacity(HG19_CHROMS.len());
-
+    let filter_threshold = ControlFilterScore::PassedMinCov | ControlFilterScore::PassedFRRatio | ControlFilterScore::InvariantSite;
 
     // Scoped threading
     // channels
@@ -447,46 +268,30 @@ fn main() {
             s.spawn(move |_| {
                 // Receive until channel closes
                 for (i, bytes) in recvr.iter() {
-                    let (chrom, pos, ref_char, raw_pileup) = bytes_to_pileup(bytes);
+                    let (site_info, raw_pileup) = bytes_to_pileup(bytes);
                     // quality filter bases based on bq and mq
                     let filt_pileup = qual_filter_pileup(&raw_pileup, min_bq, min_mq);
-
                     // test if cov after filtering is >= min_cov
                     // skip if below min_cov
-                    let filt_cov = filt_pileup.cov();
-                    if filt_cov < min_cov { continue }
-                    let mut site_flags = ControlFilterScore::PassedMinCov;
-
-                    // Convert to FullBaseCount
-                    let filt_fbc = filt_pileup.full_base_count();
-                    // compute forward ratio
-                    let fwd_ratio = (filt_fbc.forward() as f64) / (filt_cov as f64);
-                    if (fwd_ratio >= min_fratio) && (fwd_ratio < max_fratio) {
-                        site_flags.insert(ControlFilterScore::PassedFRRatio);
+                    if filt_pileup.cov() < min_cov { continue }
+                    // Generate stats
+                    let site_stats = PileupStats::from_pileup(&filt_pileup, &site_info.ref_char, min_fratio, max_fratio);
+                    // Send to channel
+                    if site_stats.site_flags.contains(filter_threshold) {
+                        sendr.send((i, site_info, filt_pileup, site_stats)).unwrap();
                     }
-                    // compute major allele
-                    // TODO: Code is naive and cannot handle het sites
-                    let allele_set = AlleleSet::from_fullbasecount(&filt_fbc);
-                    let maj_base = allele_set.alleles[0].base();
-                    let maj_cnt = allele_set.alleles[0].count();
-                    let maj_freq = (maj_cnt as f64) / (filt_cov as f64);
-                    // check if invariant
-                    if maj_freq == 1.0 {
-                        site_flags.insert(ControlFilterScore::InvariantSite);
-                    }
-                    // check if ref_char == maj_base
-                    if ref_char == *maj_base {
-                        site_flags.insert(ControlFilterScore::ReferenceBase);
-                    }
-                    sendr.send((i, chrom, pos, filt_pileup, site_flags)).unwrap();
                 }
             });
         }
         drop(send_site);
 
         // Sink
-        for (i, chrom, pos, data, site_flags) in recv_site.iter() {
-            println!("{} {}\t{}\t{:?}", i, chrom, pos, site_flags);
+        let mut collated_data: BTreeMap<usize, (SiteInfo, SitePileup, PileupStats)> = BTreeMap::new();
+        for (i, info, pileup, stats) in recv_site.iter() {
+            collated_data.insert(i, (info, pileup, stats));
+        }
+        for (i, (info, pileup, stats)) in collated_data.iter() {
+            println!("{}\t{}\t{}", info, stats, pileup);
         }
     }).unwrap();
 
