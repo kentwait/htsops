@@ -1,4 +1,3 @@
-#![feature(str_split_once)]
 // spatial_pileup.rs
 // Inputs:
 // - Filelist of mpileups to process, 1 pileup path per line
@@ -14,15 +13,17 @@
 // --min-target-bq   : Minimum base quality to consider for each sample
 // --min-target-mq   : Minimum mapping quality to consider for each sample
 // --threads         : Number of threads to use
-use std::collections::{HashMap, BTreeMap, VecDeque};
-use std::thread;
-use std::sync::mpsc;
+use std::collections::{HashMap, HashSet, BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
 use clap::{Arg, App};
 use rust_htslib::tbx::{self, Read as TbxRead};
 use indexmap::IndexMap;
+use std::time::Duration;
+use crossbeam::channel::{self, select, bounded};
+use crossbeam::thread;
+
 
 use htsops::util::{validate_path, validate_qual, read_tabix};
 use htsops::pileup::{SitePileup, FullBaseCount, AlleleSet};
@@ -278,32 +279,94 @@ fn pos_to_bed(pos_vec: &Vec<(&str, u64)>, mut f: BufWriter<File>) {
     drop(f);
 }
 
+fn bytes_to_pileup(b: Vec<u8>) -> (String, u64, char, SitePileup) {
+    // Convert binary mpileup line and parse
+    let record_string = String::from_utf8(b).unwrap();
+    let cols: Vec<String> = record_string
+        .split('\t')
+        .map(|s| s.to_owned())
+        .collect();
+    let chrom: String = cols[0].to_owned();
+    let pos: u64 = cols[1].parse::<u64>().unwrap();
+    let ref_char: char = cols[2]
+        .chars()
+        .next()
+        .unwrap()
+        .to_ascii_uppercase();
+    let sample_name = "B";
+
+    (chrom, pos, ref_char, SitePileup::from_str(
+        sample_name,
+        &ref_char,
+        (&cols[3]).parse::<usize>().unwrap(), // cov
+        &cols[4], &cols[5], &cols[6],         // base_str, bq_str, mq_str
+    ))
+}
+
+fn qual_filter_pileup(pileup: &SitePileup, min_bq: u8, min_mq: u8) -> SitePileup {
+    if pileup.bases.len() != pileup.bqs.len() {
+        panic!("bases len ({}) != bqs len ({})", pileup.bases.len(), pileup.bqs.len())
+    }
+    if pileup.bases.len() != pileup.mqs.len() {
+        panic!("bases len ({}) != mqs len ({})", pileup.bases.len(), pileup.mqs.len())
+    }
+    let passed_pos: Vec<usize> = pileup.bases.iter().enumerate()
+        .filter_map(|(i, &b)| {
+            if (b == 'N') || (b == 'n') { return None }
+            if (b == 'D') || (b == 'd') { return None }
+            let bq = pileup.bqs[i];
+            let mq = pileup.mqs[i];
+            if (bq >= min_bq) && (mq >= min_mq) { return Some(i) }
+            return None
+        }).collect();
+    SitePileup {
+        sample_name: pileup.sample_name.to_owned(),
+        bases: passed_pos.iter().map(|&i| pileup.bases[i]).collect(),
+        indels: HashMap::new(),
+        bqs: passed_pos.iter().map(|&i| pileup.bqs[i]).collect(),
+        mqs: passed_pos.iter().map(|&i| pileup.mqs[i]).collect(),
+    }
+}
+
 fn main() {
     let matches = App::new("htsops spatial_pileup.rs")
         .version("0.0.1")
         .author("Kent Kawashima <kentkawashima@gmail.com>")
         .about("Processes multiple pileups into one")
-        .arg(Arg::with_name("min_control_cov")
-            .long("min-control-cov")
+        .arg(Arg::with_name("min_cov")
+            .long("min-cov")
             .default_value("20")
             .value_name("INT")
             .help("Minimum coverage depth for the control sample. Sites where the coverage depth is less than this value will not be used.")
             .takes_value(true)
             .validator(validate_qual))
-        .arg(Arg::with_name("min_control_bq")
-            .long("min-control-bq")
+        .arg(Arg::with_name("min_bq")
+            .long("min-bq")
             .default_value("20")
             .value_name("INT")
             .help("Minimum base quality for the control sample. Bases whose base quality is less than this value will not be counted.")
             .takes_value(true)
             .validator(validate_qual))
-        .arg(Arg::with_name("min_control_mq")
-            .long("min-control-mq")
+        .arg(Arg::with_name("min_mq")
+            .long("min-mq")
             .default_value("40")
             .value_name("INT")
             .help("Minimum mapping quality for the control sample. Bases belonging to reads with mapping quality less than this value will not be counted.")
             .takes_value(true)
             .validator(validate_qual))
+        // TODO: Add validation
+        .arg(Arg::with_name("min_fratio")
+            .long("min-fratio")
+            .default_value("0.33")
+            .value_name("FLOAT")
+            .help("Minimum acceptable proportion of forward reads over total coverage depth")
+            .takes_value(true))
+        .arg(Arg::with_name("max_fratio")
+            .long("max-fratio")
+            .default_value("0.67")
+            .value_name("FLOAT")
+            .help("Maximum acceptable proportion of forward reads over total coverage depth")
+            .takes_value(true))
         .arg(Arg::with_name("CONTROL_PILEUP")
             .help("Control mpileup path")
             .required(true)
@@ -316,16 +379,18 @@ fn main() {
             .value_name("INT")
             .help("Number of threads to use")
             .takes_value(true))
-        .arg(Arg::with_name("include_bad_cov")
-            .short("k")
-            .long("include-bad-cov")
-            .help("Do not output sites whose coverage depth is less than the minimum"))
+        // .arg(Arg::with_name("include_bad_cov")
+        //     .short("k")
+        //     .long("include-bad-cov")
+        //     .help("Do not output sites whose coverage depth is less than the minimum"))
         .get_matches();
-    let min_control_cov: usize = matches.value_of("min_control_cov").unwrap().parse::<usize>().unwrap();
-    let min_control_bq: u8 = matches.value_of("min_control_bq").unwrap().parse::<u8>().unwrap();
-    let min_control_mq: u8 = matches.value_of("min_control_mq").unwrap().parse::<u8>().unwrap();
+    let min_cov: usize = matches.value_of("min_cov").unwrap().parse::<usize>().unwrap();
+    let min_bq: u8 = matches.value_of("min_bq").unwrap().parse::<u8>().unwrap();
+    let min_mq: u8 = matches.value_of("min_mq").unwrap().parse::<u8>().unwrap();
+    let min_fratio: f64 = matches.value_of("min_fratio").unwrap().parse::<f64>().unwrap();
+    let max_fratio: f64 = matches.value_of("max_fratio").unwrap().parse::<f64>().unwrap();
     let threads: usize = matches.value_of("threads").unwrap().parse::<usize>().unwrap();
-    let include_bad_cov: bool = matches.is_present("include_bad_cov");
+    // let include_bad_cov: bool = matches.is_present("include_bad_cov");
     let control_path: &str = matches.value_of("CONTROL_PILEUP").unwrap();
 
     // Read control bam first and evaluate minimums
@@ -346,140 +411,114 @@ fn main() {
     // Total number of sites visited per chrom
     let mut chrom_totals: IndexMap<&str, usize> = IndexMap::with_capacity(HG19_CHROMS.len());
 
-    // Visit chrom and then each site in control
-    for &chrom in HG19_CHROMS.iter() {
-        let ul: u64 = (HG19_CHROM_LENS.get(chrom).unwrap().to_owned() as u64 / FETCH_CHUNKSIZE) + 1;
-        
-        // Init counters per chrom
-        chrom_cov_freq.insert(chrom, BTreeMap::new());
-        let cov_freq = chrom_cov_freq.get_mut(chrom).unwrap();
 
-        chrom_maj_freq.insert(chrom, BTreeMap::new());
-        let maj_freq = chrom_maj_freq.get_mut(chrom).unwrap();
+    // Scoped threading
+    // channels
+    let (send_rec, recv_rec) = bounded(1);
 
-        chrom_frratio_freq.insert(chrom, BTreeMap::new());
-        let frratio_freq = chrom_frratio_freq.get_mut(chrom).unwrap();
+    let (send_site, recv_site) = bounded(1);
+    // let (send_cov, recv_cov) = bounded(1);
+    // let (send_fwdratio, recv_fwdratio) = bounded(1);
+    // let (send_majfreq, recv_majfreq) = bounded(1);
+    // let (send_het, recv_het) = bounded(1);
 
-        let mut this_chrom_total = 0;
-        
-        for i in 0..ul {
-            tbx_reader.fetch(*chrom_tid_lookup.get(chrom).unwrap(), i*FETCH_CHUNKSIZE, (i+1)*FETCH_CHUNKSIZE).unwrap();
-            for record in tbx_reader.records() {
-                // Convert binary mpileup line and parse
-                let record_string = String::from_utf8(record.unwrap()).unwrap();
-                let cols: Vec<String> = record_string.split('\t').map(|s| s.to_owned()).collect();
-                // let chrom: String = cols[0].to_owned();
-                let pos: u64 = cols[1].parse::<u64>().unwrap();
-                let ref_char: char = cols[2].chars().next().unwrap().to_ascii_uppercase();
-                let sample_name = "B";
-                let ctrl_pileup = SitePileup::from_str(
-                    sample_name,
-                    &ref_char,
-                    (&cols[3]).parse::<usize>().unwrap(),  // cov
-                    &cols[4], &cols[5], &cols[6]); // base_str, bq_str, mq_str
-
-                let ctrl_bc = qf_base_count(&ctrl_pileup, min_control_bq, min_control_mq);
-                let ctrl_cov = ctrl_bc.total();
-                // f/r odds
-                let ctrl_ratio = (ctrl_bc.forward() as f64) / (ctrl_bc.total() as f64);
-                this_chrom_total += 1;
-                *cov_freq.entry(ctrl_cov).or_insert(0) += 1;
-
-                // Skip sites where coverage is below minimum
-                if ctrl_cov < 1 { continue }
-                if (ctrl_cov < min_control_cov) && !include_bad_cov { continue }
-
-                // Init bitflags
-                let mut filter_score = ControlFilterScore::PassedMinCov;
-                if (ctrl_ratio > 0.33) && (ctrl_ratio < 0.67) {
-                    filter_score.insert(ControlFilterScore::PassedFRRatio);
-                }
-                let ctrl_ratio_usize = (ctrl_ratio * FREQ_DIVISOR).round() as usize;
-                *frratio_freq.entry(ctrl_ratio_usize).or_insert(0) += 1;
-                
-                let ctrl_info = format!(
-                    "{ctrl_bc}\t{ctrl_cov}\t{ctrl_bq_hist}\t{ctrl_mq_hist}\t{ctrl_raw_bc}",
-                    ctrl_bc=ctrl_bc,
-                    ctrl_cov=ctrl_cov,
-                    ctrl_bq_hist=site_bq_histogram_str(&ctrl_pileup.bqs),
-                    ctrl_mq_hist=site_mq_histogram_str(&ctrl_pileup.mqs),
-                    ctrl_raw_bc=ctrl_pileup.full_base_count(),
-                );
-
-                // stats
-                // major allele freq
-                // let major_char = ctrl_allele_set.alleles[0].base();
-                let ctrl_allele_set = AlleleSet::from_fullbasecount(&ctrl_bc);
-                let ctrl_major_base = ctrl_allele_set.alleles[0].base();
-                let ctrl_major_count = ctrl_allele_set.alleles[0].count();
-                let ctrl_major_freq = (ctrl_major_count as f64) / (ctrl_cov as f64);
-                let ctrl_major_freq_usize = (ctrl_major_freq * FREQ_DIVISOR).round() as usize;
-                if ctrl_major_freq_usize == (FREQ_DIVISOR as usize) {
-                    filter_score.insert(ControlFilterScore::InvariantSite);
-                }
-                *maj_freq.entry(ctrl_major_freq_usize).or_insert(0) += 1;
-                if ctrl_major_base.to_ascii_uppercase() == ref_char.to_ascii_uppercase() {
-                    filter_score.insert(ControlFilterScore::ReferenceBase);
-                }
-
-                let ctrl_stats = format!(
-                    "{ctrl_major_base}\t{ctrl_ratio:>7.4}\t{ctrl_major_freq:.4}",
-                    ctrl_major_base=ctrl_major_base.to_ascii_lowercase(),
-                    ctrl_ratio=ctrl_ratio,
-                    ctrl_major_freq=ctrl_major_freq,
-                );
-
-                let site_info = format!(
-                    "{chrom}\t{pos}\t{bitflag}\t{ref_char}",
-                    chrom=chrom, 
-                    pos=pos,
-                    ref_char=ref_char,
-                    bitflag=filter_score.to_bits(),  // change later
-                );
-
-                println!(
-                    "{site_info}\t{ctrl_stats}\t{ctrl_info}",
-                    site_info=site_info,
-                    ctrl_stats=ctrl_stats,
-                    ctrl_info=ctrl_info,
-                );
-
-                if filter_score.contains(passed_simple_filter) {
-                    passed_pos.push((chrom, pos));
+    thread::scope(|s| {
+        // Producer thread
+        s.spawn(|_| {
+            let mut c: usize = 0;
+            for &chrom in HG19_CHROMS.iter() {
+                let ul: u64 = (HG19_CHROM_LENS.get(chrom).unwrap().to_owned() as u64 / FETCH_CHUNKSIZE) + 1;
+                for i in 0..ul {
+                    tbx_reader.fetch(*chrom_tid_lookup.get(chrom).unwrap(), i*FETCH_CHUNKSIZE, (i+1)*FETCH_CHUNKSIZE).unwrap();
+                    for record in tbx_reader.records() {
+                        send_rec.send((c, record.unwrap())).unwrap();
+                        c += 1;
+                    }
                 }
             }
+            drop(send_rec)
+        });
+
+        // Parallel processing by n threads
+        for _ in 0..threads {
+            // Send to sink, receive from source
+            let (sendr, recvr) = (send_site.clone(), recv_rec.clone());
+            // Spawn workers in separate threads
+            s.spawn(move |_| {
+                // Receive until channel closes
+                for (i, bytes) in recvr.iter() {
+                    let (chrom, pos, ref_char, raw_pileup) = bytes_to_pileup(bytes);
+                    // quality filter bases based on bq and mq
+                    let filt_pileup = qual_filter_pileup(&raw_pileup, min_bq, min_mq);
+
+                    // test if cov after filtering is >= min_cov
+                    // skip if below min_cov
+                    let filt_cov = filt_pileup.cov();
+                    if filt_cov < min_cov { continue }
+                    let mut site_flags = ControlFilterScore::PassedMinCov;
+
+                    // Convert to FullBaseCount
+                    let filt_fbc = filt_pileup.full_base_count();
+                    // compute forward ratio
+                    let fwd_ratio = (filt_fbc.forward() as f64) / (filt_cov as f64);
+                    if (fwd_ratio >= min_fratio) && (fwd_ratio < max_fratio) {
+                        site_flags.insert(ControlFilterScore::PassedFRRatio);
+                    }
+                    // compute major allele
+                    // TODO: Code is naive and cannot handle het sites
+                    let allele_set = AlleleSet::from_fullbasecount(&filt_fbc);
+                    let maj_base = allele_set.alleles[0].base();
+                    let maj_cnt = allele_set.alleles[0].count();
+                    let maj_freq = (maj_cnt as f64) / (filt_cov as f64);
+                    // check if invariant
+                    if maj_freq == 1.0 {
+                        site_flags.insert(ControlFilterScore::InvariantSite);
+                    }
+                    // check if ref_char == maj_base
+                    if ref_char == *maj_base {
+                        site_flags.insert(ControlFilterScore::ReferenceBase);
+                    }
+                    sendr.send((i, chrom, pos, filt_pileup, site_flags)).unwrap();
+                }
+            });
         }
-        chrom_totals.insert(chrom, this_chrom_total);
-    }
+        drop(send_site);
 
-    // TODO: Output to cov freq file
-    // Print stats
-    let cov_freq_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".cov.txt");
-    let f = File::create(cov_freq_path).expect("Unable to create file");
-    let mut f = BufWriter::new(f);
-    f.write_fmt(format_args!("# Coverage\n")).expect("Unable to write data");
-    hist_to_file(&chrom_cov_freq, &chrom_totals, f);
+        // Sink
+        for (i, chrom, pos, data, site_flags) in recv_site.iter() {
+            println!("{} {}\t{}\t{:?}", i, chrom, pos, site_flags);
+        }
+    }).unwrap();
 
-    // TODO: Output to allele freq file
-    // Print stats
-    let allele_freq_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".af.txt");
-    let f = File::create(allele_freq_path).expect("Unable to create file");
-    let mut f = BufWriter::new(f);
-    f.write_fmt(format_args!("# Major allele frequency\n")).expect("Unable to write data");
-    fhist_to_file(&chrom_maj_freq, &chrom_totals, f, FREQ_DIVISOR);
 
-    // TODO: Output to fr ratio file
-    // Print stats
-    let frratio_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".fr.txt");
-    let f = File::create(frratio_path).expect("Unable to create file");
-    let mut f = BufWriter::new(f);
-    f.write_fmt(format_args!("# FR ratio frequency\n")).expect("Unable to write data");
-    fhist_to_file(&chrom_frratio_freq, &chrom_totals, f, FREQ_DIVISOR);
+    // // TODO: Output to cov freq file
+    // // Print stats
+    // let cov_freq_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".cov.txt");
+    // let f = File::create(cov_freq_path).expect("Unable to create file");
+    // let mut f = BufWriter::new(f);
+    // f.write_fmt(format_args!("# Coverage\n")).expect("Unable to write data");
+    // hist_to_file(&chrom_cov_freq, &chrom_totals, f);
 
-    // Output as bed file
-    let bed_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".passed.bed");
-    let f = File::create(bed_path).expect("Unable to create file");
-    pos_to_bed(&passed_pos, BufWriter::new(f));
+    // // TODO: Output to allele freq file
+    // // Print stats
+    // let allele_freq_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".af.txt");
+    // let f = File::create(allele_freq_path).expect("Unable to create file");
+    // let mut f = BufWriter::new(f);
+    // f.write_fmt(format_args!("# Major allele frequency\n")).expect("Unable to write data");
+    // fhist_to_file(&chrom_maj_freq, &chrom_totals, f, FREQ_DIVISOR);
+
+    // // TODO: Output to fr ratio file
+    // // Print stats
+    // let frratio_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".fr.txt");
+    // let f = File::create(frratio_path).expect("Unable to create file");
+    // let mut f = BufWriter::new(f);
+    // f.write_fmt(format_args!("# FR ratio frequency\n")).expect("Unable to write data");
+    // fhist_to_file(&chrom_frratio_freq, &chrom_totals, f, FREQ_DIVISOR);
+
+    // // Output as bed file
+    // let bed_path = format!("{}{}", control_path.rsplit_once(".").unwrap().0, ".passed.bed");
+    // let f = File::create(bed_path).expect("Unable to create file");
+    // pos_to_bed(&passed_pos, BufWriter::new(f));
     
     // Evaluate control first. Do bq and mq filtering and test coverage
     // Evaluate samples. Do bq and mq for each sample and test coverage for each as well
