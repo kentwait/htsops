@@ -212,7 +212,6 @@ fn main() {
         .arg(Arg::with_name("out")
             .short("o")
             .long("out")
-            .default_value("")
             .value_name("PATH")
             .help("Set output path. If blank or not specified, output is printed to stdout")
             .takes_value(true))
