@@ -4,6 +4,7 @@ use serde::{Serialize, Deserialize};
 use std::ops::Add;
 use std::fmt;
 
+
 #[derive(Debug)]
 pub struct FullBaseCount((usize, usize), (usize, usize), (usize, usize), (usize, usize));
 impl FullBaseCount {
@@ -71,7 +72,7 @@ impl FullBaseCount {
     pub fn g(&self) -> usize { self.2.0 + self.2.1 }
     pub fn t(&self) -> usize { self.3.0 + self.3.1 }
     pub fn count_of(&self, b: &char) -> usize {
-        match b {
+        match b.to_ascii_lowercase() {
             'a' => self.a(),
             'c' => self.c(),
             'g' => self.g(),
@@ -541,7 +542,24 @@ impl SitePileup {
 
     pub fn cov(&self) -> usize { self.bases.len() }
 }
-
+impl fmt::Display for SitePileup {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let bases_str: String = self.bases.iter()
+            .cloned()
+            .collect();
+        let bqs_str: String = self.bqs.iter()
+            .map(|&u| u as char)
+            .collect::<Vec<char>>()
+            .into_iter()
+            .collect();
+        let mqs_str: String = self.mqs.iter()
+            .map(|&u| u as char)
+            .collect::<Vec<char>>()
+            .into_iter()
+            .collect();
+        write!(f, "{}\t{}\t{}", bases_str, bqs_str, mqs_str)
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SpatialSitePileup {
