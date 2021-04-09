@@ -351,7 +351,7 @@ fn main() {
                 }
             });
         }
-        drop(recv_cov);
+        drop(send_calc);
         for (chrom, mean, cumdist) in recv_calc.iter() {
             chrom_mean_cov.insert(chrom, mean);
             chrom_cumdist.insert(chrom, cumdist);
