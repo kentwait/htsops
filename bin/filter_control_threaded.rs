@@ -257,7 +257,6 @@ fn main() {
     // Scoped threading
     // channels
     let (send_rec, recv_rec) = bounded(1);
-
     let (send_site, recv_site) = bounded(1);
     // let (send_cov, recv_cov) = bounded(1);
     // let (send_fwdratio, recv_fwdratio) = bounded(1);
@@ -316,21 +315,48 @@ fn main() {
         }
     }).unwrap();
 
-    // Compute per chromosome average cov depth
-    let chrom_mean_cov: HashMap<&str, f64> = chrom_covs.iter()
-        .map(|(chrom, covs)| (chrom.as_ref(), (covs.iter().sum::<usize>() as f64) / (covs.len() as f64)))
-        .collect();
-    // Compute per chromosome cov cummulative distribution
-    let chrom_cumdist: HashMap<&str, BTreeMap<usize, f64>> = chrom_covs.iter()
-        .map(|(chrom, covs)| {
-            let mut btm: BTreeMap<usize, usize> = BTreeMap::new();
-            covs.iter().for_each(|cov| *btm.entry(*cov).or_insert(0) += 1 );
-            let cumdist: BTreeMap<usize, f64> = btm.into_iter()
-                .map(|(cov, cnt)| (cov, (cnt as f64) / (covs.len() as f64)))
-                .collect();
-            (chrom.as_ref(), cumdist)
-        })
-        .collect();
+    // compute stats
+    let mut chrom_mean_cov: HashMap<&str, f64> = HashMap::new();
+    let mut chrom_cumdist: HashMap<&str, BTreeMap<usize, f64>> = HashMap::new();
+    let (send_cov, recv_cov) = bounded(1);
+    let (send_calc, recv_calc) = bounded(1);
+    thread::scope(|s| {
+        // Producer thread
+        s.spawn(|_| {
+            chrom_covs.iter().for_each(|(chrom, covs)| send_cov.send((chrom, covs)).unwrap() );
+            drop(send_cov)
+        });
+        // Parallel processing by n threads
+        for _ in 0..threads {
+            // Send to sink, receive from source
+            let (sendr, recvr)= (send_calc.clone(), recv_cov.clone());
+            // Spawn workers in separate threads
+            s.spawn(move |_| {
+                // Receive until channel closes
+                for (chrom, covs) in recvr.iter() {
+                    let mean = (covs.iter().sum::<usize>() as f64) / (covs.len() as f64);
+                    let mut btm: BTreeMap<usize, usize> = BTreeMap::new();
+                    covs.iter().for_each(|cov| *btm.entry(*cov).or_insert(0) += 1 );
+                    let pctdist: BTreeMap<usize, f64> = btm.into_iter()
+                        .map(|(cov, cnt)| (cov, (cnt as f64) / (covs.len() as f64)))
+                        .collect();
+                    let mut cum_sum = 0.0;
+                    let cumdist: BTreeMap<usize, f64> = pctdist.into_iter()
+                        .map(|(cov, pct)| {
+                            cum_sum += pct;
+                            (cov, cum_sum)
+                        })
+                        .collect();
+                    sendr.send((chrom, mean, cumdist)).unwrap();
+                }
+            });
+        }
+        drop(recv_cov);
+        for (chrom, mean, cumdist) in recv_calc.iter() {
+            chrom_mean_cov.insert(chrom, mean);
+            chrom_cumdist.insert(chrom, cumdist);
+        }
+    }).unwrap();
 
     // Output either to stdout or to file
     let stdout = io::stdout();
