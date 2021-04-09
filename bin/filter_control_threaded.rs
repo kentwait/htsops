@@ -153,12 +153,13 @@ impl PileupStats {
 }
 impl fmt::Display for PileupStats {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{site_flags}\t{majorb}:{majorf}\t{minorb}:{minorf}\t{fbc}", 
+        write!(f, "{site_flags}\t{majorb}:{majorf:.3}\t{minorb}:{minorf:.3}\t{cov}\t{fbc}", 
             site_flags=self.site_flags.to_bits(),
             majorb=self.major_allele,
             majorf=self.major_freq,
             minorb={if let Some(b) = self.minor_allele { b } else { '-' }},
             minorf=self.minor_freq,
+            cov=self.full_base_count.total(),
             fbc=self.full_base_count,
         )
     }
@@ -243,6 +244,8 @@ fn main() {
     // let (send_majfreq, recv_majfreq) = bounded(1);
     // let (send_het, recv_het) = bounded(1);
 
+    let mut collated_data: BTreeMap<usize, (SiteInfo, SitePileup, PileupStats)> = BTreeMap::new();
+
     thread::scope(|s| {
         // Producer thread
         s.spawn(|_| {
@@ -286,15 +289,14 @@ fn main() {
         drop(send_site);
 
         // Sink
-        let mut collated_data: BTreeMap<usize, (SiteInfo, SitePileup, PileupStats)> = BTreeMap::new();
         for (i, info, pileup, stats) in recv_site.iter() {
             collated_data.insert(i, (info, pileup, stats));
         }
-        for (i, (info, pileup, stats)) in collated_data.iter() {
-            println!("{}\t{}\t{}", info, stats, pileup);
-        }
     }).unwrap();
 
+    for (_, (info, pileup, stats)) in collated_data.iter() {
+        println!("{}\t{}\t{}", info, stats, pileup);
+    }
 
     // // TODO: Output to cov freq file
     // // Print stats
