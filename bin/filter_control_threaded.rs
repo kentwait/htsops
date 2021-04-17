@@ -314,10 +314,16 @@ fn main() {
         if let Some(cov_threshold) = chrom_cov_threshold.get(&chrom) {
             bitscore.score_cov_threshold(&stats, *cov_threshold);
         }
-        // write_h.write_fmt(format_args!("{}\t{}\t{:.4}\n", info, stats, cov_pctile)).unwrap();
-        let pval = stats.allele_orientation_fisher_test().unwrap();
-        let or = stats.allele_orientation_or().unwrap();
-        write_h.write_fmt(format_args!("{}\t\t{}\t{:.4}\t{:.4}\t\t{:.4}\n", info, stats, pval, or, cov_pctile)).unwrap();
+        let pval = match stats.allele_orientation_fisher_test() {
+            Some(or) => format!("{:.4}", or),
+            None => format!("*"),
+        };
+        // no odds ratio if the is no minor allele
+        let or = match stats.allele_orientation_or() {
+            Some(or) => format!("{:.4}", or),
+            None => format!("*"),
+        };
+        write_h.write_fmt(format_args!("{}\t\t{}\t{}\t{}\t\t{:.4}\n", info, stats, pval, or, cov_pctile)).unwrap();
     }
     write_h.flush().unwrap();
 
