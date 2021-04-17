@@ -3,8 +3,9 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::collections::HashMap;
 
-use rust_htslib::tbx::{self, Read as TbxRead};
+use rust_htslib::tbx;
 
+use crate::pileup::{SiteInfo, SitePileup, PileupStats};
 use crate::constant::*;
 
 
@@ -71,4 +72,33 @@ pub fn read_tabix(path: &str) -> (tbx::Reader, HashMap<&str, u64>) {
         }
     }).collect();
     (tbx_reader, chrom_tid_lookup)
+}
+
+
+/// Convert raw bytes into a Pileup object
+pub fn bytes_to_pileup(b: Vec<u8>) -> (SiteInfo, SitePileup) {
+    // Convert binary mpileup line and parse
+    let record_string = String::from_utf8(b).unwrap();
+    let cols: Vec<String> = record_string
+        .split('\t')
+        .map(|s| s.to_owned())
+        .collect();
+    let chrom: String = cols[0].to_owned();
+    let pos: u64 = cols[1].parse::<u64>().unwrap();
+    let ref_char: char = cols[2]
+        .chars()
+        .next()
+        .unwrap()
+        .to_ascii_uppercase();
+    let sample_name = "B";
+    
+    (
+        SiteInfo::new(&chrom, pos, &ref_char),
+        SitePileup::from_str(
+            sample_name,
+            &ref_char,
+            (&cols[3]).parse::<usize>().unwrap(), // cov
+            &cols[4], &cols[5], &cols[6]         // base_str, bq_str, mq_str
+        )
+    )
 }

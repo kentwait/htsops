@@ -1,331 +1,54 @@
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
-use std::ops::Add;
 use std::fmt;
+use crate::{Base, BaseCount, AlleleSet};
 
 
-#[derive(Debug)]
-pub struct FullBaseCount((usize, usize), (usize, usize), (usize, usize), (usize, usize));
-impl FullBaseCount {
-    pub fn f_a(&self) -> usize { self.0.0 }
-    pub fn r_a(&self) -> usize { self.0.1 }
-    pub fn f_c(&self) -> usize { self.1.0 }
-    pub fn r_c(&self) -> usize { self.1.1 }
-    pub fn f_g(&self) -> usize { self.2.0 }
-    pub fn r_g(&self) -> usize { self.2.1 }
-    pub fn f_t(&self) -> usize { self.3.0 }
-    pub fn r_t(&self) -> usize { self.3.1 }
-    pub fn full_count_of(&self, b: &char) -> usize {
-        match b {
-            'A' => self.f_a(),
-            'C' => self.f_c(),
-            'G' => self.f_g(),
-            'T' => self.f_t(),
-            'a' => self.r_a(),
-            'c' => self.r_c(),
-            'g' => self.r_g(),
-            't' => self.r_t(),
-            _ => 0,
-        }
-    }
-    pub fn forward(&self) -> usize {
-        self.0.0 + self.1.0 + self.2.0 + self.3.0 
-    }
-    pub fn reverse(&self) -> usize {
-        self.0.1 + self.1.1 + self.2.1 + self.3.1
-    }
-
-    pub fn to_basecount(&self) -> BaseCount {
-        BaseCount(
-            self.a(), self.c(), self.g(), self.t(),
-        )
-    }
-}
-impl FullBaseCount {
-    pub fn from_vec(v: &Vec<char>) -> Self {
-        let (mut f_a, mut f_c, mut f_g, mut f_t) = (0, 0, 0, 0);
-        let (mut r_a, mut r_c, mut r_g, mut r_t) = (0, 0, 0, 0);
-        v.iter().for_each(|b| {
-            match b {
-                'A' => f_a += 1,
-                'C' => f_c += 1,
-                'G' => f_g += 1,
-                'T' => f_t += 1,
-                'a' => r_a += 1,
-                'c' => r_c += 1,
-                'g' => r_g += 1,
-                't' => r_t += 1,
-                _ => ()
-            }
-        });
-        FullBaseCount((f_a, r_a),(f_c, r_c),(f_g, r_g),(f_t, r_t))
-    
-    }
-
-    pub fn empty() -> Self {
-        FullBaseCount((0, 0), (0, 0), (0, 0), (0, 0))
-    }
-
-    pub fn a(&self) -> usize { self.0.0 + self.0.1 }
-    pub fn c(&self) -> usize { self.1.0 + self.1.1 }
-    pub fn g(&self) -> usize { self.2.0 + self.2.1 }
-    pub fn t(&self) -> usize { self.3.0 + self.3.1 }
-    pub fn count_of(&self, b: &char) -> usize {
-        match b.to_ascii_lowercase() {
-            'a' => self.a(),
-            'c' => self.c(),
-            'g' => self.g(),
-            't' => self.t(),
-            _ => 0,
-        }
-    }
-
-    pub fn total(&self) -> usize {
-        self.forward() + self.reverse()
-    }
-}
-impl Add<FullBaseCount> for FullBaseCount {
-    type Output = FullBaseCount;
-    fn add(self, other: FullBaseCount) -> Self::Output {
-        FullBaseCount(
-            (self.0.0 + other.0.0, self.0.1 + other.0.1),
-            (self.1.0 + other.1.0, self.1.1 + other.1.1),
-            (self.2.0 + other.2.0, self.2.1 + other.2.1),
-            (self.3.0 + other.3.0, self.3.1 + other.3.1),
-        )
-    }
-}
-impl Add<FullBaseCount> for &FullBaseCount {
-    type Output = FullBaseCount;
-    fn add(self, other: FullBaseCount) -> Self::Output {
-        FullBaseCount(
-            (self.0.0 + other.0.0, self.0.1 + other.0.1),
-            (self.1.0 + other.1.0, self.1.1 + other.1.1),
-            (self.2.0 + other.2.0, self.2.1 + other.2.1),
-            (self.3.0 + other.3.0, self.3.1 + other.3.1),
-        )
-    }
-}
-impl Add<&FullBaseCount> for FullBaseCount {
-    type Output = FullBaseCount;
-    fn add(self, other: &FullBaseCount) -> Self::Output {
-        FullBaseCount(
-            (self.0.0 + other.0.0, self.0.1 + other.0.1),
-            (self.1.0 + other.1.0, self.1.1 + other.1.1),
-            (self.2.0 + other.2.0, self.2.1 + other.2.1),
-            (self.3.0 + other.3.0, self.3.1 + other.3.1),
-        )
-    }
-}
-impl Add<&FullBaseCount> for &FullBaseCount {
-    type Output = FullBaseCount;
-    fn add(self, other: &FullBaseCount) -> Self::Output {
-        FullBaseCount(
-            (self.0.0 + other.0.0, self.0.1 + other.0.1),
-            (self.1.0 + other.1.0, self.1.1 + other.1.1),
-            (self.2.0 + other.2.0, self.2.1 + other.2.1),
-            (self.3.0 + other.3.0, self.3.1 + other.3.1),
-        )
-    }
-}
-impl fmt::Display for FullBaseCount {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}:{}:{}:{}:{}:{}:{}", 
-            self.0.0, self.0.1, 
-            self.1.0, self.1.1,
-            self.2.0, self.2.1,
-            self.3.0, self.3.1,
-        )
-    }
-}
-
-#[derive(Debug)]
-pub struct BaseCount(usize, usize, usize, usize);
-impl BaseCount {
-    pub fn from_vec(v: &Vec<char>) -> Self {
-        let (mut a, mut c, mut g, mut t) = (0, 0, 0, 0);
-        v.iter().for_each(|b| {
-            match b {
-                'A' => a += 1,
-                'C' => c += 1,
-                'G' => g += 1,
-                'T' => t += 1,
-                'a' => a += 1,
-                'c' => c += 1,
-                'g' => g += 1,
-                't' => t += 1,
-                _ => ()
-            }
-        });
-        BaseCount(a, c, g, t)
-    }
-
-    pub fn empty() -> Self {
-        BaseCount(0, 0, 0, 0)
-    }
-
-    pub fn a(&self) -> usize { self.0 }
-    pub fn c(&self) -> usize { self.1 }
-    pub fn g(&self) -> usize { self.2 }
-    pub fn t(&self) -> usize { self.3 }
-
-    pub fn total(&self) -> usize {
-        self.0 + self.1 + self.2 + self.3
-    }
-}
-impl Add for BaseCount {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        Self(
-            self.0 + other.0,
-            self.1 + other.1,
-            self.2 + other.2,
-            self.3 + other.3,
-        )
-    }
-}
-impl fmt::Display for BaseCount {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}:{}:{}", self.0, self.1, self.2, self.3)
-    }
-}
-
-#[derive(Debug)]
-pub struct AlleleCount(char, usize);
-impl AlleleCount {
-    pub fn new(base: &char, count: usize) -> Self {
-        AlleleCount(base.to_owned(), count)
-    }
-    pub fn base(&self) -> &char { &self.0 }
-    pub fn base_index(&self) -> usize { 
-        match self.0.to_ascii_lowercase() {
-            'a' => 0,
-            'c' => 1,
-            'g' => 2,
-            't' => 3,
-            b => panic!("Invalid base [{}]", b),
-        }    
-    }
-    pub fn count(&self) -> usize { self.1}
-}
-
-
-#[derive(Debug)]
-pub struct AlleleFreq(char, f32);
-impl AlleleFreq {
-    pub fn new(base: &char, freq: f32) -> Self {
-        AlleleFreq(base.to_owned(), freq)
-    }
-    pub fn base(&self) -> &char { &self.0 }
-    pub fn freq(&self) -> f32 { self.1}
-}
-
-pub struct AlleleSet{
-    pub alleles: Vec<AlleleCount>,
-    sorted: bool,
-}
-impl AlleleSet {
-    pub fn new(alleles: Vec<AlleleCount>) -> Self {
-        AlleleSet {
-            alleles,
-            sorted: false,
-        }
-    }
-
-    pub fn from_fullbasecount(base_count: &FullBaseCount) -> Self {
-        let alleles: Vec<AlleleCount> = vec![
-                ('a', base_count.a()),
-                ('c', base_count.c()),
-                ('g', base_count.g()),
-                ('t', base_count.t()),
-            ]
-            .into_iter()
-            .filter_map(|(k, v)| match v {
-                0 => None,
-                _ => Some(AlleleCount(k, v))
-            }).collect();
-        let mut allele_set = AlleleSet::new(alleles);
-        allele_set.sort();
-        allele_set
-    }
-
-    pub fn from_basecount(base_count: &BaseCount) -> Self {
-        let alleles: Vec<AlleleCount> = vec![
-                ('a', base_count.a()),
-                ('c', base_count.c()),
-                ('g', base_count.g()),
-                ('t', base_count.t())]
-            .into_iter()
-            .filter_map(|(k, v)| match v {
-                0 => None,
-                _ => Some(AlleleCount(k, v))
-            }).collect();
-        let mut allele_set = AlleleSet::new(alleles);
-        allele_set.sort();
-        allele_set
-    }
-
-    pub fn total_count(&self) -> usize {
-        self.alleles.iter()
-            .map(|AlleleCount(_, c)| c)
-            .sum()
-    }
-    pub fn len(&self) -> usize {
-        self.alleles.len()
-    }
-    pub fn sort(&mut self) {
-        if !self.sorted {
-            self.alleles.sort_by(|AlleleCount(_, a), AlleleCount(_, b)| b.cmp(a));
-            self.sorted = true;
-        }
-    }
-}
-
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SitePileup {
-    pub sample_name: String,
-    pub bases: Vec<char>,
-    pub indels: HashMap<String, usize>,
-    pub bqs: Vec<u8>, 
-    pub mqs: Vec<u8>,
+    sample_name: String,
+    base_chars: Vec<char>,
+    // pub bases: Vec<Base>,
+    indels: HashMap<String, usize>,
+    bqs: Vec<u8>, 
+    mqs: Vec<u8>,
 }
 impl SitePileup {
+    // constructor
     pub fn from_str(sample_name: &str, ref_char: &char, cov: usize, base_str: &str, bq_str: &str, mq_str: &str) -> SitePileup {
         // Immediately return if base_str is "*" which means empty
         let sample_name = sample_name.to_owned();
         if base_str == "*" {
-            let bases = Vec::new();
+            let base_chars = Vec::new();
             let indels = HashMap::new();
             let bqs = Vec::new();
             let mqs = Vec::new();
-            return SitePileup{ sample_name, bases, indels, bqs, mqs }
+            return SitePileup{ sample_name, base_chars, indels, bqs, mqs }
         }
-        let (mut bases, indels) = SitePileup::parse_base_str(base_str, ref_char);
+        let (mut base_chars, indels) = SitePileup::parse_base_str(base_str, ref_char);
         let mut bqs = SitePileup::parse_qual_str(bq_str);
         let mut mqs = SitePileup::parse_qual_str(mq_str);
 
-        if bases.len() != cov {
+        if base_chars.len() != cov {
             panic!(format!("Base length [{}] and coverage [{}] do not match:\n{}", 
-                bases.len(), cov, base_str));
+            base_chars.len(), cov, base_str));
         }
-        else if bases.len() != bqs.len() {
+        else if base_chars.len() != bqs.len() {
             panic!(format!("Base length [{}] and base qualities length [{}] do not match:\n{}\n{}", 
-                bases.len(), bqs.len(), base_str, bq_str));
+            base_chars.len(), bqs.len(), base_str, bq_str));
         } 
-        else if bases.len() != mqs.len() {
+        else if base_chars.len() != mqs.len() {
             panic!(format!("Base length [{}] and mapping qualities length [{}] do not match:\n{}\n{}", 
-                bases.len(), mqs.len(), base_str, mq_str));
+            base_chars.len(), mqs.len(), base_str, mq_str));
         }
-        let keep: Vec<bool> = bases.iter().map(|b| {
+        let keep: Vec<bool> = base_chars.iter().map(|b| {
                 if b == &'D' || b == &'d' { false }
                 else { true }
             }).collect();
         {
             let mut i = 0;
-            bases.retain(|_| (keep[i], i += 1).0);
+            base_chars.retain(|_| (keep[i], i += 1).0);
         }
         {
             let mut i = 0;
@@ -335,8 +58,15 @@ impl SitePileup {
             let mut i = 0;
             mqs.retain(|_| (keep[i], i += 1).0);
         }
-        SitePileup{ sample_name, bases, indels, bqs, mqs }
+        SitePileup{ sample_name, base_chars, indels, bqs, mqs }
     }
+
+    // getters
+    pub fn sample_name(&self) -> &str { &self.sample_name }
+    pub fn base_chars(&self) -> &Vec<char> { &self.base_chars }
+    pub fn indels(&self) -> &HashMap<String, usize> { &self.indels }
+    pub fn bqs(&self) -> &Vec<u8>  { &self.bqs }
+    pub fn mqs(&self) -> &Vec<u8>  { &self.mqs }
 
     // TODO: transform this into an iterator
     fn parse_qual_str(q_str: &str) -> Vec<u8> {
@@ -454,8 +184,9 @@ impl SitePileup {
         (bases, indels)
     }
 
+    // drop N's and deletions
     pub fn cleanup(&mut self, drop_n: bool, drop_del: bool) -> Option<usize> {
-        let keep: Vec<bool> = self.bases.iter().enumerate()
+        let keep: Vec<bool> = self.base_chars.iter().enumerate()
             .map(|(i, b)| {
                 if drop_n == true {
                     if *b == 'N' || *b == 'n' { return false }
@@ -467,7 +198,7 @@ impl SitePileup {
             }).collect();
         {
             let mut i = 0;
-            self.bases.retain(|_| (keep[i], i += 1).0);
+            self.base_chars.retain(|_| (keep[i], i += 1).0);
         }
         {
             let mut i = 0;
@@ -477,14 +208,16 @@ impl SitePileup {
             let mut i = 0;
             self.mqs.retain(|_| (keep[i], i += 1).0);
         }
-        if self.bases.len() > 0 {
-            return Some(self.bases.len())
+        if self.base_chars.len() > 0 {
+            return Some(self.base_chars.len())
         }
         return None
     }
 
-    pub fn quality_filter(&mut self, min_bq: u8, min_mq: u8) -> Option<usize> {
-        let keep: Vec<bool> = self.bases.iter().enumerate()
+    // quality filter and drop bases inplace
+    // TODO: Fix algo
+    pub fn quality_filter_inplace(&mut self, min_bq: u8, min_mq: u8) -> Option<usize> {
+        let keep: Vec<bool> = self.base_chars.iter().enumerate()
             .map(|(i, _)| {
                 let bq = self.bqs[i];
                 let mq = self.mqs[i];
@@ -493,7 +226,7 @@ impl SitePileup {
             }).collect();
         {
             let mut i = 0;
-            self.bases.retain(|_| (keep[i], i += 1).0);
+            self.base_chars.retain(|_| (keep[i], i += 1).0);
         }
         {
             let mut i = 0;
@@ -503,48 +236,41 @@ impl SitePileup {
             let mut i = 0;
             self.mqs.retain(|_| (keep[i], i += 1).0);
         }
-        if self.bases.len() > 0 {
-            return Some(self.bases.len())
+        if self.base_chars.len() > 0 {
+            return Some(self.base_chars.len())
         }
         return None
     }
 
-    // Count bases
-    pub fn full_base_count(&self) -> FullBaseCount {
-        FullBaseCount::from_vec(&self.bases)
-    }
-    pub fn base_count(&self) -> BaseCount {
-        BaseCount::from_vec(&self.bases)
-    }
-
-    pub fn fr_count(&self) -> (usize, usize) {
-        let mut f = 0;
-        let mut r = 0;
-        self.bases.iter().for_each(|b| {
-            if b.is_ascii_uppercase() == true { f += 1 } 
-            else if b.is_ascii_lowercase() == true { r += 1 }
-        });
-        (f, r)
-    }
-
-    pub fn forward_count(&self) -> usize {
-        self.bases.iter().map(|b| if b.is_ascii_uppercase() == true { 1 } else { 0 }).sum()
+    // quality filter and makes a new SitePileup of the result
+    pub fn quality_filter(&self, min_bq: u8, min_mq: u8) -> SitePileup {
+        let passed_pos: Vec<usize> = self.base_chars.iter().enumerate()
+            .filter_map(|(i, &b)| {
+                if (b == 'N') || (b == 'n') { return None }
+                if (b == 'D') || (b == 'd') { return None }
+                let bq = self.bqs[i];
+                let mq = self.mqs[i];
+                if (bq >= min_bq) && (mq >= min_mq) { return Some(i) }
+                return None
+            }).collect();
+        SitePileup {
+            sample_name: self.sample_name.to_owned(),
+            base_chars: passed_pos.iter().map(|&i| self.base_chars[i]).collect(),
+            indels: HashMap::new(),
+            bqs: passed_pos.iter().map(|&i| self.bqs[i]).collect(),
+            mqs: passed_pos.iter().map(|&i| self.mqs[i]).collect(),
+        }
     }
 
-    pub fn reverse_count(&self) -> usize {
-        self.bases.iter().map(|b| if b.is_ascii_lowercase() == true { 1 } else { 0 }).sum()
+    pub fn to_base_count(&self) -> BaseCount {
+        BaseCount::from_char_vec(&self.base_chars)
     }
-
-    pub fn fr_ratio(&self) -> f32 {
-        let (count_upper, count_lower) = self.fr_count();
-        (count_upper as f32) / ((count_upper + count_lower) as f32)
-    }
-
-    pub fn cov(&self) -> usize { self.bases.len() }
+    
+    pub fn cov(&self) -> usize { self.base_chars.len() }
 }
 impl fmt::Display for SitePileup {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let bases_str: String = self.bases.iter()
+        let bases_str: String = self.base_chars.iter()
             .cloned()
             .collect();
         let bqs_str: String = self.bqs.iter()
@@ -561,7 +287,7 @@ impl fmt::Display for SitePileup {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SpatialSitePileup {
     // Chromosome name such as "chr1" in hg19
     pub chrom: String, 
@@ -574,7 +300,6 @@ pub struct SpatialSitePileup {
     // Vector of target SitePileups
     pub pileups: Vec<SitePileup>,
 }
-
 impl SpatialSitePileup {
     // TODO: Change sample_list to hasmap of sample_list and 2d coords
     pub fn parse_mpileup_row(row: &str, sample_list: &Vec<&str>, control_name: &str) -> SpatialSitePileup {
@@ -599,6 +324,208 @@ impl SpatialSitePileup {
         SpatialSitePileup{ chrom, pos, ref_char, control_pileup, pileups }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct SiteInfo {
+    chrom: String,
+    pos: u64,
+    ref_base: Base,
+}
+impl SiteInfo {
+    pub fn new(chrom: &str, pos: u64, ref_char: &char) -> Self {
+        Self {
+            chrom: chrom.to_owned(),
+            pos: pos,
+            ref_base: Base::from_char(ref_char).unwrap(),
+        }
+    }
+    pub fn from_str(s: &str, sep: &str) -> Self {
+        let data_vec: Vec<&str> = s.split(sep).collect();
+        Self {
+            chrom: data_vec[0].to_owned(),
+            pos: data_vec[1].parse::<u64>().unwrap(),
+            ref_base: Base::from_char(&data_vec[2].chars().next().unwrap()).unwrap(),
+        }
+    }
+    pub fn chrom(&self) -> &str {
+        self.chrom.as_ref()
+    }
+    pub fn pos(&self) -> u64 {
+        self.pos
+    }
+    pub fn ref_base(&self) -> Base {
+        self.ref_base
+    }
+}
+impl fmt::Display for SiteInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}\t{}\t{}", self.chrom, self.pos, self.ref_base)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PileupStats {
+    allele_set: AlleleSet,
+    cov: usize,
+    allele_orientation_table: [u32; 4],
+    allele_orientation_fisher_pval: Option<f64>,
+    allele_orientation_odds_ratio: Option<f64>,
+}
+impl PileupStats {
+    // constructors
+    // TODO: force a particular base to be the major allele, minor_allele
+    pub fn from_pileup(pileup: &SitePileup) -> Option<PileupStats> {
+        let base_count = pileup.to_base_count();
+        let cov = base_count.total();
+        let allele_set = match AlleleSet::from_base_count(base_count) {
+            Some(allele_set) => allele_set,
+            None => return None
+        };
+        let major_allele = allele_set.major_allele();
+        
+        let a: u32 = allele_set.base_count().forward_count_of(major_allele) as u32;
+        let b: u32 = allele_set.base_count().reverse_count_of(major_allele) as u32;
+        let (c, d) = match allele_set.minor_allele() {
+            Some(minor_allele) => (
+                allele_set.base_count().forward_count_of(minor_allele) as u32,
+                allele_set.base_count().forward_count_of(minor_allele) as u32,
+            ),
+            None => (0, 0),
+        };
+        let allele_orientation_table = [
+            a, b,
+            c, d,
+        ];
+        Some(PileupStats {
+            allele_set,
+            cov,
+            allele_orientation_table,
+            allele_orientation_fisher_pval: None,
+            allele_orientation_odds_ratio: None,
+        })
+    }
+    pub fn from_str(s: &str, sep: &str) -> Option<PileupStats> {
+        // format
+        // {major_base}:{major_count}:{major_freq:.3}\t{minor_base}:{minor_count}:{minor_freq:.3}\t{base_count}\t{cov}
+        let data_vec: Vec<&str> = s.split(sep).collect();
+        let base_count = BaseCount::from_str(data_vec[data_vec.len()-2], ":");
+        let cov: usize = data_vec[data_vec.len()-1].parse::<usize>().unwrap();
+        let allele_set = match AlleleSet::from_base_count(base_count) {
+            Some(allele_set) => allele_set,
+            None => return None
+        };
+        let major_allele = allele_set.major_allele();
+        
+        let a: u32 = allele_set.base_count().forward_count_of(major_allele) as u32;
+        let b: u32 = allele_set.base_count().reverse_count_of(major_allele) as u32;
+        let (c, d) = match allele_set.minor_allele() {
+            Some(minor_allele) => (
+                allele_set.base_count().forward_count_of(minor_allele) as u32,
+                allele_set.base_count().forward_count_of(minor_allele) as u32,
+            ),
+            None => (0, 0),
+        };
+        let allele_orientation_table = [
+            a, b,
+            c, d,
+        ];
+        Some(PileupStats {
+            allele_set,
+            cov,
+            allele_orientation_table,
+            allele_orientation_fisher_pval: None,
+            allele_orientation_odds_ratio: None,
+        })
+    }
+    pub fn from_allele_set(allele_set: AlleleSet) -> Self {
+        let major_allele = allele_set.major_allele();
+        let a: u32 = allele_set.base_count().forward_count_of(major_allele) as u32;
+        let b: u32 = allele_set.base_count().reverse_count_of(major_allele) as u32;
+        let (c, d) = match allele_set.minor_allele() {
+            Some(minor_allele) => (
+                allele_set.base_count().forward_count_of(minor_allele) as u32,
+                allele_set.base_count().forward_count_of(minor_allele) as u32,
+            ),
+            None => (0, 0),
+        };
+        let allele_orientation_table = [
+            a, b,
+            c, d,
+        ];
+        Self {
+            cov: allele_set.num_bases(),
+            allele_set,
+            allele_orientation_table,
+            allele_orientation_fisher_pval: None,
+            allele_orientation_odds_ratio: None,
+        }
+    }
+
+    // getters
+    pub fn major_allele(&self) -> Base { self.allele_set.major_allele() }
+    pub fn minor_allele(&self) -> Option<Base> { self.allele_set.minor_allele() }
+    pub fn other_alleles(&self) -> Vec<Base> { self.allele_set.other_alleles() }
+
+    pub fn major_count(&self) -> usize { self.allele_set.major_count() }
+    pub fn minor_count(&self) -> usize { self.allele_set.minor_count() }
+    pub fn others_count(&self) -> usize { self.allele_set.others_count() }
+
+    pub fn major_freq(&self) -> f64 { self.allele_set.major_freq() }
+    pub fn minor_freq(&self) -> f64 { self.allele_set.minor_freq() }
+
+    pub fn allele_set(&self) -> &AlleleSet { &self.allele_set }
+    pub fn base_count(&self) -> &BaseCount { self.allele_set.base_count() }
+
+    // stats
+    pub fn num_alleles(&self) -> usize { self.allele_set.len() }
+    pub fn cov(&self) -> usize { self.cov }
+    pub fn allele_orientation_fisher_test(&self) -> Option<f64> { self.allele_orientation_fisher_pval }
+    pub fn allele_orientation_or(&self) -> Option<f64> { self.allele_orientation_odds_ratio }
+
+    pub fn compute_stats(&mut self) -> (f64, Option<f64>) {
+        (
+            self.compute_allele_orientation_fisher_pval(),
+            self.compute_allele_orientation_odds_ratio(),
+        )
+    }
+
+    pub fn compute_allele_orientation_fisher_pval(&mut self) -> f64 {
+        // Fisher test
+        let exact_test = fishers_exact::fishers_exact(&self.allele_orientation_table).unwrap();
+        let pval = exact_test.two_tail_pvalue;
+        self.allele_orientation_fisher_pval = Some(pval);
+        pval
+    }
+    pub fn compute_allele_orientation_odds_ratio(&mut self) -> Option<f64> {
+        if self.minor_count() == 0 { return None }
+        // Odds ratio of minor f/r / major f/r, 0.5 zero adjustment
+        // k / reciprocal of the opposite treatment arm size
+        let major_zero_adj: f64 = 0.5 / (self.minor_count() as f64);
+        let minor_zero_adj: f64 = 0.5 / (self.major_count() as f64);
+        let minor_odds: f64 = (self.allele_orientation_table[2] as f64 + minor_zero_adj) / (self.allele_orientation_table[3] as f64 + minor_zero_adj);
+        let major_odds: f64 = (self.allele_orientation_table[0] as f64 + major_zero_adj) / (self.allele_orientation_table[1] as f64 + major_zero_adj);
+        let or = minor_odds / major_odds;
+        self.allele_orientation_odds_ratio = Some(or);
+        Some(or)
+    }
+
+}
+impl fmt::Display for PileupStats {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{major_base}:{major_count}:{major_freq:.3}\t{minor_base}:{minor_count}:{minor_freq:.3}\t{base_count}\t{cov}", 
+            major_base=self.major_allele(),
+            major_count=self.major_count(),
+            major_freq=self.major_freq(),
+            minor_base={if let Some(base) = self.minor_allele() { base.to_char() } else { '*' }},
+            minor_count=self.minor_count(),
+            minor_freq=self.minor_freq(),
+            base_count=self.base_count(),
+            cov=self.cov,
+        )
+    }
+}
+
+
 
 // Using rust htslib directly
 
